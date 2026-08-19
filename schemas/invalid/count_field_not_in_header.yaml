@@ -1,0 +1,31 @@
+# expect: 'nmsgs' is not a field of the packet header
+# why: the cross-check reads the field out of the decoded header
+name: tiny_framed
+kind: framed
+endian: big
+header:
+  name: hdr
+  fields:
+  - name: seq
+    bytes: 4
+  - name: count
+    bytes: 2
+messages:
+  length:
+    name: mlen
+    bytes: 2
+  type:
+    name: mtype
+    bytes: 1
+  types:
+  - name: alpha
+    code: 1
+    fields:
+    - name: a
+      bytes: 4
+  - name: beta
+    code: 2
+    fields:
+    - name: b
+      bytes: 2
+  count_field: nmsgs

@@ -1,0 +1,25 @@
+# expect: layer chain contains a cycle
+# why: a cycle would make the golden model loop forever
+name: tiny_layered
+kind: layered
+endian: big
+start: outer
+layers:
+- name: outer
+  fields:
+  - name: sel
+    bits: 8
+  - name: pad
+    bits: 8
+  next:
+    selector: sel
+    map:
+      1: inner
+- name: inner
+  fields:
+  - name: payload_id
+    bits: 16
+  next:
+    selector: payload_id
+    map:
+      7: outer

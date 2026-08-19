@@ -1,0 +1,26 @@
+# expect: is smaller than the 2 bytes of declared fields
+# why: a declared minimum shorter than the fixed fields is unsatisfiable
+name: tiny_layered
+kind: layered
+endian: big
+start: outer
+layers:
+- name: outer
+  fields:
+  - name: sel
+    bits: 8
+  - name: pad
+    bits: 8
+  next:
+    selector: sel
+    map:
+      1: inner
+  header_bytes:
+    field: sel
+    scale: 1
+    min: 1
+    max: 8
+- name: inner
+  fields:
+  - name: payload_id
+    bits: 16

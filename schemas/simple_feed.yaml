@@ -1,0 +1,92 @@
+# simple_feed -- a self-contained market-data-style wire format.
+#
+# 16-byte packet header, then N messages.  Each message is a 2-byte big-endian
+# length, a 1-byte type code, then a payload whose layout depends on the type.
+# The length prefix counts the type byte and the payload but not itself, so a
+# message occupies 2 + length bytes on the wire.  Every message type has a fixed
+# payload size, which makes the length prefix redundant *and* checkable: a
+# length that disagrees with the type is a malformed message.
+#
+# This is the protocol the rotate-then-slice datapath exists for.  Messages
+# straddle beat boundaries at arbitrary byte offsets and several may begin in a
+# single beat.
+name: simple_feed
+kind: framed
+endian: big
+doc: Length-prefixed, type-discriminated message feed with a 16-byte packet header.
+
+enums:
+  side_e:
+    width: 8
+    values:
+      BUY: 0x42   # 'B'
+      SELL: 0x53  # 'S'
+  session_state_e:
+    width: 8
+    values:
+      PRE_OPEN: 0
+      OPEN: 1
+      HALTED: 2
+      CLOSED: 3
+  auction_e:
+    width: 8
+    values:
+      NONE: 0
+      OPENING: 1
+      CLOSING: 2
+      HALT_RESUME: 3
+
+header:
+  name: feed_hdr
+  doc: 16-byte packet header.
+  fields:
+    - {name: session_id, bytes: 4}
+    - {name: seq_num, bytes: 8, doc: monotonically increasing per packet}
+    - {name: msg_count, bytes: 2}
+    - {name: reserved, bytes: 2}
+
+messages:
+  length: {name: msg_len, bytes: 2}
+  type: {name: msg_type, bytes: 1}
+  length_covers: after_length
+  count_field: msg_count
+  sequence_field: seq_num
+
+  types:
+    - name: trade
+      code: 0x01
+      doc: 22-byte payload, 25 bytes on the wire.
+      fields:
+        - {name: symbol, bytes: 8, type: char}
+        - {name: price, bytes: 8, type: int}
+        - {name: qty, bytes: 4, type: uint}
+        - {name: side, bytes: 1, type: enum, enum: side_e}
+        - {name: trade_flags, bytes: 1, type: uint}
+
+    - name: quote
+      code: 0x02
+      doc: 20-byte payload, 23 bytes on the wire.
+      fields:
+        - {name: symbol, bytes: 8, type: char}
+        - {name: bid_px, bytes: 4, type: int}
+        - {name: ask_px, bytes: 4, type: int}
+        - {name: bid_sz, bytes: 2, type: uint}
+        - {name: ask_sz, bytes: 2, type: uint}
+
+    - name: status
+      code: 0x03
+      doc: 11-byte payload, 14 bytes on the wire -- the smallest message.
+      fields:
+        - {name: session_state, bytes: 1, type: enum, enum: session_state_e}
+        - {name: reason_code, bytes: 2, type: int}
+        - {name: timestamp, bytes: 8, type: uint}
+
+    - name: imbalance
+      code: 0x04
+      doc: 29-byte payload, 32 bytes on the wire -- the largest message.
+      fields:
+        - {name: symbol, bytes: 8, type: char}
+        - {name: paired_qty, bytes: 8, type: uint}
+        - {name: imbalance_qty, bytes: 8, type: int}
+        - {name: ref_px, bytes: 4, type: int}
+        - {name: auction_type, bytes: 1, type: enum, enum: auction_e}

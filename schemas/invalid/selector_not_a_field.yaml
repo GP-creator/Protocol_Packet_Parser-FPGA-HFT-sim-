@@ -1,0 +1,21 @@
+# expect: 'missing' is not a field of layer 'outer'
+# why: the selector must be extractable from the layer that declares it
+name: tiny_layered
+kind: layered
+endian: big
+start: outer
+layers:
+- name: outer
+  fields:
+  - name: sel
+    bits: 8
+  - name: pad
+    bits: 8
+  next:
+    selector: missing
+    map:
+      1: inner
+- name: inner
+  fields:
+  - name: payload_id
+    bits: 16

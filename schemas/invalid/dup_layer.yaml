@@ -1,0 +1,25 @@
+# expect: duplicate layer name 'outer'
+# why: layer names key the generated enum and module names
+name: tiny_layered
+kind: layered
+endian: big
+start: outer
+layers:
+- name: outer
+  fields:
+  - name: sel
+    bits: 8
+  - name: pad
+    bits: 8
+  next:
+    selector: sel
+    map:
+      1: inner
+- name: inner
+  fields:
+  - name: payload_id
+    bits: 16
+- name: outer
+  fields:
+  - name: z
+    bits: 8

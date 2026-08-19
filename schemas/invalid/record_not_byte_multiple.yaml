@@ -1,0 +1,23 @@
+# expect: is not a whole number of bytes
+# why: records must land on byte boundaries or the next record is unaddressable
+name: tiny_layered
+kind: layered
+endian: big
+start: outer
+layers:
+- name: outer
+  fields:
+  - name: sel
+    bits: 8
+  - name: pad
+    bits: 8
+  next:
+    selector: sel
+    map:
+      1: inner
+- name: inner
+  fields:
+  - name: payload_id
+    bits: 16
+  - name: stray
+    bits: 3

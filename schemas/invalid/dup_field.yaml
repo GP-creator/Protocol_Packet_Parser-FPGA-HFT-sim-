@@ -1,0 +1,23 @@
+# expect: duplicate field name 'sel'
+# why: duplicate names would collide in the generated struct
+name: tiny_layered
+kind: layered
+endian: big
+start: outer
+layers:
+- name: outer
+  fields:
+  - name: sel
+    bits: 8
+  - name: pad
+    bits: 8
+  - name: sel
+    bits: 8
+  next:
+    selector: sel
+    map:
+      1: inner
+- name: inner
+  fields:
+  - name: payload_id
+    bits: 16

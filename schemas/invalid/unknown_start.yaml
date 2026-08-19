@@ -1,0 +1,21 @@
+# expect: 'ether' is not a declared layer
+# why: the walk needs a real entry point
+name: tiny_layered
+kind: layered
+endian: big
+start: ether
+layers:
+- name: outer
+  fields:
+  - name: sel
+    bits: 8
+  - name: pad
+    bits: 8
+  next:
+    selector: sel
+    map:
+      1: inner
+- name: inner
+  fields:
+  - name: payload_id
+    bits: 16

@@ -1,0 +1,19 @@
+# expect: at least one field
+# why: an empty record occupies no bytes and cannot terminate a chain
+name: tiny_layered
+kind: layered
+endian: big
+start: outer
+layers:
+- name: outer
+  fields:
+  - name: sel
+    bits: 8
+  - name: pad
+    bits: 8
+  next:
+    selector: sel
+    map:
+      1: inner
+- name: inner
+  fields: []

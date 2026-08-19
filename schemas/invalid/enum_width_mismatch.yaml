@@ -1,0 +1,37 @@
+# expect: but enum 'flag_e' is 8 bits
+# why: a 32-bit field cannot carry an 8-bit enum without a silent truncation rule
+name: tiny_framed
+kind: framed
+endian: big
+header:
+  name: hdr
+  fields:
+  - name: seq
+    bytes: 4
+  - name: count
+    bytes: 2
+messages:
+  length:
+    name: mlen
+    bytes: 2
+  type:
+    name: mtype
+    bytes: 1
+  types:
+  - name: alpha
+    code: 1
+    fields:
+    - name: a
+      bytes: 4
+      type: enum
+      enum: flag_e
+  - name: beta
+    code: 2
+    fields:
+    - name: b
+      bytes: 2
+enums:
+  flag_e:
+    width: 8
+    values:
+      'ON': 1

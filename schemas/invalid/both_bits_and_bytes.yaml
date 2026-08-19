@@ -1,0 +1,22 @@
+# expect: exactly one of 'bits' or 'bytes'
+# why: specifying both invites them to disagree
+name: tiny_layered
+kind: layered
+endian: big
+start: outer
+layers:
+- name: outer
+  fields:
+  - name: sel
+    bits: 8
+    bytes: 1
+  - name: pad
+    bits: 8
+  next:
+    selector: sel
+    map:
+      1: inner
+- name: inner
+  fields:
+  - name: payload_id
+    bits: 16

@@ -1,0 +1,22 @@
+# expect: unknown key 'protocol_version'
+# why: a stray top-level key is a typo, not an extension point
+name: tiny_layered
+kind: layered
+endian: big
+start: outer
+layers:
+- name: outer
+  fields:
+  - name: sel
+    bits: 8
+  - name: pad
+    bits: 8
+  next:
+    selector: sel
+    map:
+      1: inner
+- name: inner
+  fields:
+  - name: payload_id
+    bits: 16
+protocol_version: 2

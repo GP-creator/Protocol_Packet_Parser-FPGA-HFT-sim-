@@ -1,0 +1,21 @@
+# expect: unknown kind 'streamed'
+# why: only layered and framed are implemented
+name: tiny_layered
+kind: streamed
+endian: big
+start: outer
+layers:
+- name: outer
+  fields:
+  - name: sel
+    bits: 8
+  - name: pad
+    bits: 8
+  next:
+    selector: sel
+    map:
+      1: inner
+- name: inner
+  fields:
+  - name: payload_id
+    bits: 16

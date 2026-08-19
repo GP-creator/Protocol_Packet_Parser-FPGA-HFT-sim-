@@ -1,0 +1,26 @@
+# expect: does not fit in 4 bits
+# why: an enum constant must fit the width it declares
+name: tiny_layered
+kind: layered
+endian: big
+start: outer
+layers:
+- name: outer
+  fields:
+  - name: sel
+    bits: 8
+  - name: pad
+    bits: 8
+  next:
+    selector: sel
+    map:
+      1: inner
+- name: inner
+  fields:
+  - name: payload_id
+    bits: 16
+enums:
+  small_e:
+    width: 4
+    values:
+      BIG: 99

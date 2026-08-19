@@ -1,0 +1,12 @@
+# expect: must declare 'messages'
+# why: a framed schema with no message types decodes nothing
+name: tiny_framed
+kind: framed
+endian: big
+header:
+  name: hdr
+  fields:
+  - name: seq
+    bytes: 4
+  - name: count
+    bytes: 2

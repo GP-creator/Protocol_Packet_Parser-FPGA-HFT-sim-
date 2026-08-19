@@ -1,0 +1,22 @@
+# expect: but type is 'uint'
+# why: an enum key without type: enum is a silently ignored typo
+name: tiny_layered
+kind: layered
+endian: big
+start: outer
+layers:
+- name: outer
+  fields:
+  - name: sel
+    bits: 8
+    enum: ethertype_e
+  - name: pad
+    bits: 8
+  next:
+    selector: sel
+    map:
+      1: inner
+- name: inner
+  fields:
+  - name: payload_id
+    bits: 16

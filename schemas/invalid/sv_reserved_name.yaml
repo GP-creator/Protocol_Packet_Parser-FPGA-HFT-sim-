@@ -1,0 +1,21 @@
+# expect: SystemVerilog reserved word
+# why: field names become SystemVerilog identifiers verbatim
+name: tiny_layered
+kind: layered
+endian: big
+start: outer
+layers:
+- name: outer
+  fields:
+  - name: sel
+    bits: 8
+  - name: pad
+    bits: 8
+  next:
+    selector: sel
+    map:
+      1: inner
+- name: inner
+  fields:
+  - name: logic
+    bits: 16

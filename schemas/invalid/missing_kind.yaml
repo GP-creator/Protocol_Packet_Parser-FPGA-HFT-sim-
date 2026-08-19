@@ -1,0 +1,20 @@
+# expect: missing required key 'kind'
+# why: kind selects the whole decoding strategy and has no safe default
+name: tiny_layered
+endian: big
+start: outer
+layers:
+- name: outer
+  fields:
+  - name: sel
+    bits: 8
+  - name: pad
+    bits: 8
+  next:
+    selector: sel
+    map:
+      1: inner
+- name: inner
+  fields:
+  - name: payload_id
+    bits: 16

@@ -1,0 +1,71 @@
+# Ethernet II / IPv4 / UDP.
+#
+# The warm-up protocol: fixed field layouts, next-layer discrimination, and one
+# variable-length header (IPv4's IHL).  IPv4 options are not decoded -- IHL
+# tells the parser how many bytes to skip past the fixed 20.
+name: eth_ipv4_udp
+kind: layered
+endian: big
+start: eth
+doc: Ethernet II framing carrying IPv4 carrying UDP.
+
+enums:
+  ethertype_e:
+    width: 16
+    values:
+      IPV4: 0x0800
+      ARP: 0x0806
+      VLAN: 0x8100
+      IPV6: 0x86DD
+  ip_proto_e:
+    width: 8
+    values:
+      ICMP: 1
+      TCP: 6
+      UDP: 17
+
+layers:
+  - name: eth
+    doc: Ethernet II MAC header, no VLAN tag.
+    fields:
+      - {name: dst_mac, bytes: 6, type: bytes}
+      - {name: src_mac, bytes: 6, type: bytes}
+      - {name: ethertype, bits: 16, type: enum, enum: ethertype_e}
+    next:
+      selector: ethertype
+      map:
+        0x0800: ipv4
+
+  - name: ipv4
+    doc: IPv4 header. Length is IHL*4 bytes; anything past byte 20 is options.
+    fields:
+      - {name: version, bits: 4}
+      - {name: ihl, bits: 4, doc: header length in 32-bit words}
+      - {name: dscp, bits: 6}
+      - {name: ecn, bits: 2}
+      - {name: total_length, bits: 16}
+      - {name: identification, bits: 16}
+      - {name: flags, bits: 3}
+      - {name: frag_offset, bits: 13}
+      - {name: ttl, bits: 8}
+      - {name: protocol, bits: 8, type: enum, enum: ip_proto_e}
+      - {name: hdr_checksum, bits: 16}
+      - {name: src_ip, bytes: 4, type: bytes}
+      - {name: dst_ip, bytes: 4, type: bytes}
+    header_bytes:
+      field: ihl
+      scale: 4
+      min: 20
+      max: 60
+    next:
+      selector: protocol
+      map:
+        17: udp
+
+  - name: udp
+    doc: UDP header. Terminal layer; everything after it is payload.
+    fields:
+      - {name: src_port, bits: 16}
+      - {name: dst_port, bits: 16}
+      - {name: udp_length, bits: 16}
+      - {name: udp_checksum, bits: 16}

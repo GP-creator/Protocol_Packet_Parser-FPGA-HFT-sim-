@@ -1,0 +1,24 @@
+# expect: scale must be >= 1
+# why: a zero scale makes every header zero bytes long
+name: tiny_layered
+kind: layered
+endian: big
+start: outer
+layers:
+- name: outer
+  fields:
+  - name: sel
+    bits: 8
+  - name: pad
+    bits: 8
+  next:
+    selector: sel
+    map:
+      1: inner
+  header_bytes:
+    field: sel
+    scale: 0
+- name: inner
+  fields:
+  - name: payload_id
+    bits: 16

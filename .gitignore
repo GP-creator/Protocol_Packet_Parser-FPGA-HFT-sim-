@@ -1,0 +1,21 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+build/
+dist/
+.venv/
+
+# Simulation artifacts
+sim_build/
+obj_dir/
+results.xml
+*.vcd
+*.fst
+*.log
+dump.vcd
+
+# Generated RTL is not checked in, except one sample kept for review
+rtl/generated/*
+!rtl/generated/sample/
+!rtl/generated/sample/**

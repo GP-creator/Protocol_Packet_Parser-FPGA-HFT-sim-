@@ -1,0 +1,34 @@
+# expect: must not declare 'messages'
+# why: mixing the two shapes in one file hides which decoder will run
+name: tiny_layered
+kind: layered
+endian: big
+start: outer
+layers:
+- name: outer
+  fields:
+  - name: sel
+    bits: 8
+  - name: pad
+    bits: 8
+  next:
+    selector: sel
+    map:
+      1: inner
+- name: inner
+  fields:
+  - name: payload_id
+    bits: 16
+messages:
+  length:
+    name: l
+    bytes: 2
+  type:
+    name: t
+    bytes: 1
+  types:
+  - name: x
+    code: 1
+    fields:
+    - name: q
+      bytes: 1

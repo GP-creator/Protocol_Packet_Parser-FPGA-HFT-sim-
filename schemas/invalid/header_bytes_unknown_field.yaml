@@ -1,0 +1,24 @@
+# expect: 'nosuch' is not a field of layer 'outer'
+# why: the variable-length expression must reference a field of its own layer
+name: tiny_layered
+kind: layered
+endian: big
+start: outer
+layers:
+- name: outer
+  fields:
+  - name: sel
+    bits: 8
+  - name: pad
+    bits: 8
+  next:
+    selector: sel
+    map:
+      1: inner
+  header_bytes:
+    field: nosuch
+    scale: 4
+- name: inner
+  fields:
+  - name: payload_id
+    bits: 16
