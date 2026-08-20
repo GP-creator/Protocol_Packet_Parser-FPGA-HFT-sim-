@@ -101,8 +101,14 @@ MUTANTS: list[Mutant] = [
         id="ir-length-convention",
         what="length prefix treated as covering the whole message, not what follows it",
         file="wirespec/ir.py",
-        old="            return total - self.length_field.width_bytes\n",
-        new="            return total\n",
+        # `total_from_length`, not `expected_length_value`. The first version of
+        # this mutant hit the latter and died to a single round-trip test,
+        # which is how it came out that `expected_length_value` is reached only
+        # from tests -- the decoder and the layout both go through the inverse.
+        # A mutant that dies to one test is a signal about the code, not just
+        # about the suite.
+        old="            return value + self.length_field.width_bytes\n",
+        new="            return value\n",
         stages=("pytest", "sim:parser_feed:64"),
         regen=True,
         expect="every message's declared size, in the model and in field_extract",
@@ -248,13 +254,17 @@ def evaluate(mut: Mutant) -> None:
                 killed_by = "generate"
                 note = "the generator refused to emit"
         if killed_by is None:
+            # Every stage runs, even after one has already objected. Stopping
+            # at the first failure would leave "the RTL comparison never got a
+            # chance" indistinguishable from "the RTL comparison did not care",
+            # and those are very different things to know about a mutant that
+            # was caught by a structural check in the generator.
             for stage in mut.stages:
                 passed, out = run_stage(stage)
                 if not passed:
-                    killed_by = stage
-                    objectors = failing_tests(out)
-                    note = first_failure(out)
-                    break
+                    killed_by = killed_by or stage
+                    objectors += [f"{stage}: {t}" for t in failing_tests(out)]
+                    note = note or first_failure(out)
     finally:
         path.write_text(original, encoding="utf-8")
         if mut.regen:
@@ -266,8 +276,10 @@ def evaluate(mut: Mutant) -> None:
         "file": mut.file,
         "killed": killed_by is not None,
         "killed_by": killed_by,
-        "objectors": objectors[:8],
+        "objectors": objectors[:12],
         "objector_count": len(objectors),
+        "stages_that_objected": sorted({o.split(":")[0] for o in objectors}),
+        "stages_run": list(mut.stages),
         "detail": note,
         "expected_to_notice": mut.expect,
         "seconds": round(time.time() - t0, 1),
@@ -336,10 +348,11 @@ def main() -> int:
         mark = "KILLED  " if r["killed"] else "SURVIVED"
         who = ""
         if r["objectors"]:
-            who = f"  <- {r['objectors'][0]}"
-            if r["objector_count"] > 1:
-                who += f" (+{r['objector_count'] - 1} more)"
-        print(f"{mark} {r['seconds']:>5.1f}s  {r['killed_by'] or ''}{who}")
+            who = (
+                f"  {r['objector_count']} objector(s) in "
+                f"{'+'.join(r['stages_that_objected'])}"
+            )
+        print(f"{mark} {r['seconds']:>5.1f}s{who}")
 
     killed = [m for m in chosen if m.result["killed"]]
     survived = [m for m in chosen if not m.result["killed"]]
