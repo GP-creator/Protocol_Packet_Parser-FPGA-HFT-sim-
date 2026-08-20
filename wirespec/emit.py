@@ -56,6 +56,14 @@ class EmittedFile:
         return self.text.count("\n")
 
 
+def f_port(layout: Layout, field_name: str) -> str:
+    """The output port carrying a named field of the packet header."""
+    for f in layout.layers[0].fields:
+        if f.name == field_name:
+            return f.port
+    raise KeyError(f"{field_name} is not a field of {layout.layers[0].name}")
+
+
 def make_env() -> Environment:
     env = Environment(
         loader=FileSystemLoader(str(TEMPLATE_DIR)),
@@ -64,7 +72,9 @@ def make_env() -> Environment:
         lstrip_blocks=True,
         keep_trailing_newline=True,
     )
-    env.globals.update(slice_expr=slice_expr, sv_int=sv_int, pad=pad, max=max, len=len)
+    env.globals.update(
+        slice_expr=slice_expr, sv_int=sv_int, pad=pad, f_port=f_port, max=max, len=len
+    )
     return env
 
 
@@ -80,11 +90,21 @@ def _banner(layout: Layout, template: str, out: str) -> str:
     )
 
 
-#: template -> output filename, for a layered schema
+#: template -> output filename, per schema kind.
+#:
+#: A framed packet header is a layer chain of length one, so both kinds share
+#: hdr_parse_layered.sv.j2 rather than having a near-duplicate template.
 LAYERED_FILES = {
     "proto_pkg.sv.j2": "{name}_pkg.sv",
     "hdr_parse_layered.sv.j2": "hdr_parse_{name}.sv",
     "parser_top_layered.sv.j2": "parser_top_{name}.sv",
+}
+
+FRAMED_FILES = {
+    "proto_pkg.sv.j2": "{name}_pkg.sv",
+    "hdr_parse_layered.sv.j2": "hdr_parse_{name}.sv",
+    "field_extract.sv.j2": "field_extract_{name}.sv",
+    "parser_top_framed.sv.j2": "parser_top_{name}.sv",
 }
 
 
@@ -92,7 +112,8 @@ def render(layout: Layout, *, out_dir: str = "rtl/generated") -> list[EmittedFil
     """Render every file for ``layout``. Nothing is written to disk here."""
     env = make_env()
     files: list[EmittedFile] = []
-    for template_name, pattern in LAYERED_FILES.items():
+    plan = FRAMED_FILES if layout.framed else LAYERED_FILES
+    for template_name, pattern in plan.items():
         template = env.get_template(template_name)
         text = template.render(
             L=layout,

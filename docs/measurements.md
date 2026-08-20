@@ -169,6 +169,97 @@ python3 -m wirespec.cli info --schema schemas/simple_feed.yaml
 WIRESPEC_UPDATE_SNAPSHOTS=1 python3 -m pytest tests/test_emit.py
 ```
 
+## M4 — `simple_feed` end to end
+
+Measured 2026-08-19.
+
+### Sizing, from `wirespec/layout.py`
+
+`MSG_MIN`=14, `MSG_MAX`=32, `SLOTS = ceil(KEEP_W / MSG_MIN)`,
+`BUF_BYTES = MSG_MAX-1 + KEEP_W`.
+
+| `DATA_W` | 64 | 128 | 256 | 512 |
+|---|---|---|---|---|
+| bytes per beat | 8 | 16 | 32 | 64 |
+| SLOTS (= `msg_rotate` instances) | 1 | 2 | 3 | 5 |
+| stitch buffer, bytes | 39 | 47 | 63 | 95 |
+| message record bus, bits | 552 | 552 | 552 | 552 |
+
+Record bus is 18 merged fields across 4 message types. `symbol` appears in three
+types at the same offset and is one slice; **every** field is uniform, so
+`field_extract_simple_feed.sv` contains **zero** muxes — asserted by
+`tests/test_emit.py::test_field_extract_needs_no_muxes_for_simple_feed`.
+
+### Multiple messages per beat, observed
+
+`test_every_straddle_position`, histogram of messages accepted per cycle:
+
+| `DATA_W` | messages/cycle |
+|---|---|
+| 64 | `{1: 81}` — SLOTS=1, and provably no cycle can do better |
+| 128 | `{1: 197, 2: 12}` — the second slot fires |
+
+At 8 bytes/beat a second message can never complete in one cycle; at 16 it can.
+That is why `SLOTS` is `ceil(KEEP_W/MSG_MIN)` and not larger — see `B008`.
+
+### Verification volume
+
+| | `DATA_W=64` | `DATA_W=128` |
+|---|---|---|
+| Random packets vs golden | 300 | 300 |
+| Random bytes | 40,115 | 40,115 |
+| Messages decoded | 1,515 | 1,515 |
+| Field comparisons | 9,803 | 9,803 |
+| Mismatches | **0** | **0** |
+
+Plus, at each width: every straddle alignment (0..`KEEP_W` padding messages
+ahead of five messages of mixed type); message runs of 1/2/3/5/8/13/21/40;
+120 random packets back to back with **zero** idle cycles; 80 with 35% `tvalid`
+gaps; 13 defect classes each sandwiched between two well-formed packets; and
+`stats.sv` compared field-for-field against `golden.StreamModel`.
+
+`s_axis_tready` fell on **0** cycles. `msg_stitch`'s `o_overflow` asserted **0**
+times outside the test that provokes it deliberately.
+
+### Suites at M4
+
+**16 cocotb suite runs, all passing.** New this milestone:
+
+| Suite | Tests | Widths |
+|---|---|---|
+| `msg_rotate` | 4 | 64, 128 |
+| `msg_stitch` | 7 | 64, 128 |
+| `parser_feed` | 8 | 64, 128 |
+
+`msg_rotate` sweeps every offset from 0 to `IN_BYTES` exhaustively; `msg_stitch`
+runs 600 cycles of random beats against a Python byte-queue model.
+
+### Size
+
+| | lines |
+|---|---|
+| `msg_rotate.sv` | 42 |
+| `msg_stitch.sv` | 100 |
+| `msg_framer.sv` | 361 |
+| `stats.sv` | 73 |
+| `field_extract_simple_feed.sv` (generated) | 128 |
+| `parser_top_simple_feed.sv` (generated) | 335 |
+
+### Lint
+
+`verilator --lint-only -Wall`, **zero warnings**, 10 targets × 4 widths.
+`parser_top_simple_feed` is clean at 64/128/256/512.
+
+### Totals at M4
+
+| Quantity | Value |
+|---|---|
+| pytest tests | 169 passed, 1.32 s |
+| cocotb suite runs | 16 |
+| lint invocations | 40, zero warnings |
+| `./ci/check.sh` | green |
+
 ## Defects found
 
-See `docs/bugs-found.md`.
+See `docs/bugs-found.md`. Eight so far: `B001` (M1), `B002`–`B005` (M2),
+`B006`–`B008` (M4).

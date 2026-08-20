@@ -1,0 +1,12 @@
+rtl/common/pkg_wirespec.sv
+rtl/generated/simple_feed_pkg.sv
+rtl/common/pkt_align.sv
+rtl/common/hdr_accum.sv
+rtl/common/payload_window.sv
+rtl/common/msg_rotate.sv
+rtl/common/msg_stitch.sv
+rtl/common/msg_framer.sv
+rtl/common/stats.sv
+rtl/generated/hdr_parse_simple_feed.sv
+rtl/generated/field_extract_simple_feed.sv
+rtl/generated/parser_top_simple_feed.sv

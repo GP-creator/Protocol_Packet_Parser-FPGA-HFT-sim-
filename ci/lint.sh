@@ -20,9 +20,23 @@ TARGETS=(
   "parser_top_eth_ipv4_udp:@rtl/filelist_m2.f"
 )
 
+# These do not import pkg_wirespec, so linting them with it in the file list
+# would report its constants as unused. A leading '!' means "has no DATA_W".
+TARGETS+=(
+  "msg_rotate:!rtl/common/msg_rotate.sv"
+  "msg_stitch:rtl/common/msg_stitch.sv"
+  "stats:!rtl/common/stats.sv"
+)
+# msg_framer needs pkg_wirespec for ws_err_e but not for WS_LEN_W, so linting it
+# alone would report that constant as unused. It is covered through
+# parser_top_simple_feed at all four widths.
+
 # Generated RTL, if it has been emitted. Regenerate with `make gen`.
 if [ -f rtl/generated/parser_top_eth_ipv4_udp.sv ]; then
   TARGETS+=("parser_top_eth_ipv4_udp[generated]:@rtl/filelist_gen.f")
+fi
+if [ -f rtl/generated/parser_top_simple_feed.sv ]; then
+  TARGETS+=("parser_top_simple_feed[generated]:@rtl/filelist_feed.f")
 fi
 
 rc=0
@@ -31,13 +45,20 @@ for entry in "${TARGETS[@]}"; do
   src="${entry#*:}"
   label="$top"
   top="${top%%\[*}"   # strip a "[generated]" tag from the module name
+  gparam=(-GDATA_W=64)
+  if [ "${src:0:1}" = "!" ]; then
+    src="${src:1}"
+    gparam=()
+  fi
+
   for w in $WIDTHS; do
     printf 'lint %-40s DATA_W=%-4s ' "$label" "$w"
+    if [ ${#gparam[@]} -gt 0 ]; then gparam=(-GDATA_W="$w"); fi
     if [ "${src:0:1}" = "@" ]; then
-      out=$(verilator --lint-only -Wall -sv --top-module "$top" -GDATA_W="$w" -f "${src:1}" 2>&1)
+      out=$(verilator --lint-only -Wall -sv --top-module "$top" "${gparam[@]}" -f "${src:1}" 2>&1)
     else
       # shellcheck disable=SC2086
-      out=$(verilator --lint-only -Wall -sv --top-module "$top" -GDATA_W="$w" $src 2>&1)
+      out=$(verilator --lint-only -Wall -sv --top-module "$top" "${gparam[@]}" $src 2>&1)
     fi
     if [ $? -ne 0 ]; then
       printf 'FAIL\n%s\n' "$out"

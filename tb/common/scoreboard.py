@@ -156,3 +156,77 @@ class EthScoreboard:
             f"{len(self.mismatches)} mismatch(es) over {self.checked} packets:\n"
             + self.report()
         )
+
+
+# --------------------------------------------------------------------------
+# simple_feed
+# --------------------------------------------------------------------------
+
+
+@dataclass
+class FeedScoreboard:
+    """Check simple_feed message records and packet verdicts against golden.
+
+    The message record bus is one packed vector per slot; the layout tells us
+    where each field sits. That unpacking is shared with the emitter on purpose
+    -- it is a transport detail, not a claim about the protocol. The *values* it
+    yields are still compared against a decoder that never saw the layout.
+    """
+
+    ir: IR
+    layout: object  # wirespec.layout.Layout
+    mismatches: list[str] = field(default_factory=list)
+    packets: int = 0
+    messages: int = 0
+    fields_checked: int = 0
+
+    def unpack(self, rec: int) -> dict[str, int]:
+        out: dict[str, int] = {}
+        for f in self.layout.msg_fields:  # type: ignore[attr-defined]
+            raw = (rec >> f.rec_lsb) & ((1 << f.width) - 1)
+            if f.signed and raw >= (1 << (f.width - 1)):
+                raw -= 1 << f.width
+            out[f.name] = raw
+        return out
+
+    def check_packet(self, index: int, pkt: bytes, verdict, msgs: list[int]) -> Decoded:
+        """``verdict`` is (err, msg_count); ``msgs`` the raw record vectors."""
+        dec = decode(self.ir, pkt)
+        self.packets += 1
+        err, count = verdict
+
+        want_err = golden_err(dec)
+        if err != want_err:
+            self.mismatches.append(
+                f"packet #{index}: o_pkt_err {err}, model says {want_err} "
+                f"({dec.errors[0] if dec.errors else 'ok'})\n  {pkt.hex()}"
+            )
+
+        want = dec.messages
+        if count != len(want):
+            self.mismatches.append(
+                f"packet #{index}: o_pkt_msgs {count}, model decoded {len(want)}"
+            )
+        if len(msgs) != len(want):
+            self.mismatches.append(
+                f"packet #{index}: {len(msgs)} message records for {len(want)} decoded"
+            )
+            return dec
+
+        for k, (raw, w) in enumerate(zip(msgs, want, strict=True)):
+            got = self.unpack(raw)
+            self.messages += 1
+            for name, value in w.values.items():
+                self.fields_checked += 1
+                if got.get(name) != as_int(value):
+                    self.mismatches.append(
+                        f"packet #{index} msg {k} ({w.name}): {name} "
+                        f"got {got.get(name)}, want {as_int(value)}"
+                    )
+        return dec
+
+    def assert_clean(self) -> None:
+        assert not self.mismatches, (
+            f"{len(self.mismatches)} mismatch(es) over {self.packets} packets, "
+            f"{self.messages} messages:\n" + "\n".join(self.mismatches[:8])
+        )

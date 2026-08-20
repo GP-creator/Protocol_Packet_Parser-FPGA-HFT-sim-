@@ -35,6 +35,56 @@ def files(eth_ir):
     return render(build_layout(eth_ir, 64), out_dir="rtl/generated")
 
 
+@pytest.fixture(scope="module")
+def feed_files(feed_ir):
+    return render(build_layout(feed_ir, 64), out_dir="rtl/generated")
+
+
+def test_framed_snapshots_match(feed_files):
+    SNAP_DIR.mkdir(exist_ok=True)
+    stale = []
+    for f in feed_files:
+        snap = SNAP_DIR / f.path.name
+        if UPDATE or not snap.exists():
+            snap.write_text(f.text, encoding="utf-8")
+            continue
+        if snap.read_text(encoding="utf-8") != f.text:
+            stale.append(f.path.name)
+    if UPDATE:
+        pytest.skip("snapshots rewritten")
+    assert not stale, f"emitted RTL differs from the snapshot for {stale}"
+
+
+def test_field_extract_needs_no_muxes_for_simple_feed(feed_files, feed_ir):
+    """Every simple_feed field sits at one offset, so every slice is static.
+
+    A mux would appear as an always_comb block. Their absence is the concrete
+    payoff of rotating the window before slicing it.
+    """
+    text_ = next(f.text for f in feed_files if "field_extract" in f.path.name)
+    layout = build_layout(feed_ir, 64)
+    assert all(f.uniform for f in layout.msg_fields)
+    assert "always_comb" not in text_, "a field needed a mux over message types"
+    for f in layout.msg_fields:
+        m = re.search(rf"^  assign {re.escape(f.sig)}\s+= (.+);$", text_, re.M)
+        assert m, f"no assign for {f.name}"
+        assert m.group(1) == slice_expr("i_win", f.segments)
+        assert f"o_rec[{f.rec_lsb:<4} +:" in text_ or f"o_rec[{f.rec_lsb} +:" in text_
+
+
+def test_field_extract_checks_every_declared_size(feed_files, feed_ir):
+    text_ = next(f.text for f in feed_files if "field_extract" in f.path.name)
+    for m in build_layout(feed_ir, 64).messages:
+        assert f"(is_{m.name} && (i_total == TOT_W'({m.bytes_})))" in text_
+
+
+def test_framed_top_registers_the_message_bus(feed_files):
+    """B006: the message bus must sit on the same stage as the packet verdict."""
+    text_ = next(f.text for f in feed_files if f.path.name.startswith("parser_top"))
+    assert "msg_valid_q <= fr_slot_valid;" in text_
+    assert "assign o_msg_valid = msg_valid_q;" in text_
+
+
 # --------------------------------------------------------------------------
 # Snapshots
 # --------------------------------------------------------------------------
@@ -271,7 +321,7 @@ def test_cli_reports_a_bad_schema_without_a_traceback(tmp_path):
     assert "Traceback" not in out.stderr
 
 
-def test_cli_rejects_a_framed_schema_cleanly():
+def test_cli_generates_a_framed_schema(tmp_path):
     out = subprocess.run(
         [
             sys.executable,
@@ -280,10 +330,20 @@ def test_cli_rejects_a_framed_schema_cleanly():
             "gen",
             "--schema",
             str(ROOT / "schemas" / "simple_feed.yaml"),
+            "--out",
+            "gen",
+            "--root",
+            str(tmp_path),
         ],
         capture_output=True,
         text=True,
         cwd=ROOT,
     )
-    assert out.returncode == 2
-    assert "only layered schemas" in out.stderr
+    assert out.returncode == 0, out.stderr
+    for name in (
+        "simple_feed_pkg.sv",
+        "hdr_parse_simple_feed.sv",
+        "field_extract_simple_feed.sv",
+        "parser_top_simple_feed.sv",
+    ):
+        assert (tmp_path / "gen" / name).exists(), name

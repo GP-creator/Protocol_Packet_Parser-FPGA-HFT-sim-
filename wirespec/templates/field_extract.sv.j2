@@ -1,0 +1,83 @@
+{{ banner }}
+// Static field extraction from one rotated message window.
+//
+// msg_rotate has already put the message's first byte at bit 0, so every field
+// here is a constant bit slice -- no lane muxing, no dependence on where the
+// message happened to start in the beat. That is the whole point of rotating
+// first: this module is instantiated once per message *slot*, and its cost does
+// not grow with the number of fields.
+//
+// A field carried by several message types at the same offset is one slice
+// shared between them. Only a field that sits at *different* offsets in
+// different types needs a mux, and then it is a mux over the handful of type
+// codes, never over the lanes of a beat.
+//
+// {{ L.msg_fields|length }} record fields across {{ L.messages|length }} message types; {{ L.msg_fields|rejectattr("uniform")|list|length }} need a mux.
+//
+// Combinational.
+
+`timescale 1ns / 1ps
+`default_nettype none
+
+module field_extract_{{ L.name }} #(
+  parameter int MSG_BITS = {{ L.pkg }}::{{ L.upper }}_MSG_MAX * 8,
+  parameter int TOT_W    = {{ L.tot_w }},
+  parameter int REC_W    = {{ L.pkg }}::{{ L.upper }}_REC_W
+) (
+  input  wire [MSG_BITS-1:0] i_win,    // byte 0 = start of the message
+  input  wire [TOT_W-1:0]    i_total,  // total bytes the length prefix declares
+
+  output wire                o_type_ok,
+  output wire                o_size_ok,
+  output wire [{{ L.type_field.width - 1 }}:0]          o_type,
+  output wire [REC_W-1:0]    o_rec
+);
+
+  // ------------------------------------------------------- discrimination --
+  assign o_type = {{ slice_expr('i_win', L.type_field.segments) }};
+
+{% for m in L.messages %}
+  logic is_{{ m.name }};
+{% endfor %}
+
+{% for m in L.messages %}
+  assign is_{{ pad(m.name, 12) }} = (o_type == {{ sv_int(m.code, L.type_field.width) }});
+{% endfor %}
+
+  assign o_type_ok = {% for m in L.messages %}is_{{ m.name }}{{ " || " if not loop.last else ";" }}{% endfor %}
+
+
+  // Every type has a fixed size, so the length prefix is redundant -- and
+  // therefore checkable. A length that disagrees with the type is malformed.
+  assign o_size_ok = {% for m in L.messages %}(is_{{ m.name }} && (i_total == TOT_W'({{ m.bytes_ }}))){{ " ||\n                     " if not loop.last else ";" }}{% endfor %}
+
+
+  // ---------------------------------------------------------------- fields --
+{% for f in L.msg_fields %}
+  {{ pad(f.decl, 20) }} {{ pad(f.sig, 18) }};  // {{ f.width }}b{{ " signed" if f.signed else "" }}, in {{ f.types|join(", ") }}
+{% endfor %}
+
+{% for f in L.msg_fields %}
+{% if f.uniform %}
+  assign {{ pad(f.sig, 18) }} = {{ slice_expr('i_win', f.segments) }};
+{% else %}
+  // Carried at different offsets by different types: one mux over type codes.
+  always_comb begin
+    {{ f.sig }} = '0;
+{% for tname, segs in f.placements %}
+    {{ "if" if loop.first else "end else if" }} (is_{{ tname }}) begin
+      {{ f.sig }} = {{ slice_expr('i_win', segs) }};
+{% endfor %}
+    end
+  end
+{% endif %}
+{% endfor %}
+
+  // --------------------------------------------------------- record pack ---
+{% for f in L.msg_fields %}
+  assign o_rec[{{ pad(f.rec_lsb|string, 4) }} +: {{ pad(f.width|string, 3) }}] = {{ f.sig }};
+{% endfor %}
+
+endmodule
+
+`default_nettype wire

@@ -32,6 +32,37 @@ package {{ L.pkg }};
   } {{ e.name }};
 
 {% endfor %}
+{% if L.framed %}
+  // Messages. Sized so the framer never falls behind: MSG_MAX-1 bytes can be
+  // left over and one beat adds KEEP_W more, so at most SLOTS messages can
+  // complete in a cycle.
+  localparam int {{ L.upper }}_MSG_MAX   = {{ L.msg_max }};
+  localparam int {{ L.upper }}_MSG_MIN   = {{ L.msg_min }};
+  localparam int {{ L.upper }}_PREFIX    = {{ L.prefix_bytes }};
+  localparam int {{ L.upper }}_LEN_OFF   = {{ L.len_off }};
+  localparam int {{ L.upper }}_LEN_BYTES = {{ L.len_bytes }};
+  localparam int {{ L.upper }}_LEN_ADD   = {{ L.len_add }};
+  localparam int {{ L.upper }}_REC_W     = {{ L.msg_rec_bits }};
+
+  typedef enum logic [{{ L.type_field.width - 1 }}:0] {
+{% for m in L.messages %}
+    MSG_{{ m.name|upper }} = {{ sv_int(m.code, L.type_field.width) }}{{ "," if not loop.last else "" }}
+{% endfor %}
+  } {{ L.name }}_msg_e;
+
+{% for m in L.messages %}
+  localparam int {{ pad("MSG_" + m.name|upper + "_BYTES", 28) }} = {{ m.bytes_ }};
+{% endfor %}
+
+  // Bit position of each field in the message record bus. The testbench unpacks
+  // o_msg_data with these, so unlike the layer offsets below they are load
+  // bearing.
+{% for f in L.msg_fields %}
+  localparam int {{ pad("REC_" + f.name|upper + "_LSB", 28) }} = {{ pad(f.rec_lsb|string, 4) }};
+  localparam int {{ pad("REC_" + f.name|upper + "_W", 28) }} = {{ pad(f.width|string, 4) }};
+{% endfor %}
+
+{% endif %}
   // Field offsets, in bits from the start of the layer that carries them.
   // Emitted for consumers of the record bus; this module does not read them,
   // hence the narrow waiver.

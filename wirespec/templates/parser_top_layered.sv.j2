@@ -169,9 +169,17 @@ module parser_top_{{ L.name }} #(
   // Diagnostics the record does not carry: truncation is already implied by
   // acc_have at acc_done, and the keep mask is validated by pkt_align. Tie them
   // off rather than leaving dangling nets.
+  logic acc_pad;
+  generate
+    if (ACC_BITS > WIN_BITS) begin : g_pad
+      assign acc_pad = &acc_win[ACC_BITS-1:WIN_BITS];
+    end else begin : g_nopad
+      assign acc_pad = 1'b0;
+    end
+  endgenerate
+
   logic unused_ok;
-  assign unused_ok = &{1'b0, acc_short, al_keep, al_pkt_bytes,
-                       acc_win[ACC_BITS-1:WIN_BITS]};
+  assign unused_ok = &{1'b0, acc_short, al_keep, al_pkt_bytes, acc_pad};
 
 endmodule
 

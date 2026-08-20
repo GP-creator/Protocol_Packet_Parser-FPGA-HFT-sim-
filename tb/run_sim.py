@@ -66,6 +66,22 @@ SUITES: list[Suite] = [
     # against the generated RTL. Identical results is the M3 acceptance
     # criterion, so it is checked by construction rather than by inspection.
     Suite(
+        name="msg_rotate",
+        toplevel="msg_rotate",
+        module="tb.unit.test_msg_rotate",
+        sources=[COMMON / "msg_rotate.sv"],
+        widths=(64, 128),
+        parameters={"IN_BYTES": 0, "OUT_BYTES": 32},  # IN_BYTES fixed up per width
+    ),
+    Suite(
+        name="msg_stitch",
+        toplevel="msg_stitch",
+        module="tb.unit.test_msg_stitch",
+        sources=[COMMON / "msg_stitch.sv"],
+        widths=(64, 128),
+        parameters={"MSG_MAX": 32},
+    ),
+    Suite(
         name="parser_eth_hand",
         toplevel="parser_top_eth_ipv4_udp",
         module="tb.integration.test_parser_eth",
@@ -94,6 +110,26 @@ SUITES: list[Suite] = [
         ],
         widths=(64, 128),
     ),
+    Suite(
+        name="parser_feed",
+        toplevel="parser_top_simple_feed",
+        module="tb.integration.test_parser_feed",
+        sources=PKG
+        + [
+            GEN / "simple_feed_pkg.sv",
+            COMMON / "pkt_align.sv",
+            COMMON / "hdr_accum.sv",
+            COMMON / "payload_window.sv",
+            COMMON / "msg_rotate.sv",
+            COMMON / "msg_stitch.sv",
+            COMMON / "msg_framer.sv",
+            COMMON / "stats.sv",
+            GEN / "hdr_parse_simple_feed.sv",
+            GEN / "field_extract_simple_feed.sv",
+            GEN / "parser_top_simple_feed.sv",
+        ],
+        widths=(64, 128),
+    ),
 ]
 
 
@@ -101,7 +137,11 @@ def run_one(suite: Suite, width: int, *, waves: bool, verbose: bool) -> bool:
     tag = f"{suite.name}_w{width}"
     build_dir = ROOT / "sim_build" / tag
     params = dict(suite.parameters)
-    params["DATA_W"] = width
+    if suite.toplevel == "msg_rotate":
+        # msg_rotate has no DATA_W of its own; size it the way msg_framer does.
+        params["IN_BYTES"] = params["OUT_BYTES"] - 1 + width // 8
+    else:
+        params["DATA_W"] = width
 
     runner = get_runner("verilator")
     runner.build(

@@ -79,10 +79,92 @@ def test_unsupported_data_w_is_rejected(eth_ir):
     assert "not supported" in str(exc.value)
 
 
-def test_framed_schema_is_rejected_for_now(feed_ir):
+@pytest.mark.parametrize("data_w,slots", [(64, 1), (128, 2), (256, 3), (512, 5)])
+def test_framed_slot_count(feed_ir, data_w, slots):
+    """SLOTS = ceil(KEEP_W / MSG_MIN); the derivation is in msg_framer.sv.
+
+    Sizing to the *buffer* instead would give 2/3/4/6, which over-provisions --
+    at 8-byte beats and a 14-byte minimum message, a second slot can never fire
+    because the framer already consumed greedily last cycle.
+    """
+    L = build_layout(feed_ir, data_w)
+    assert L.slots == slots
+    assert L.slots * L.msg_min >= L.keep_w, "the framer would fall behind"
+
+
+@pytest.mark.parametrize("data_w", SUPPORTED_DATA_W)
+def test_framed_buffer_capacity(feed_ir, data_w):
+    """MSG_MAX-1 can be left over and one beat adds KEEP_W more."""
+    L = build_layout(feed_ir, data_w)
+    assert L.buf_bytes == L.msg_max - 1 + L.keep_w
+    assert L.buf_bytes >= L.msg_max, "one whole message must always fit"
+
+
+def test_framed_shape(feed_ir):
+    L = build_layout(feed_ir, 64)
+    assert L.framed
+    assert L.hdr_bytes == 16
+    assert [lay.name for lay in L.layers] == ["feed_hdr"]
+    assert L.layers[0].is_terminal, "a framed header is a chain of length one"
+    assert [m.name for m in L.messages] == ["trade", "quote", "status", "imbalance"]
+    assert [m.bytes_ for m in L.messages] == [25, 23, 14, 32]
+    assert (L.msg_max, L.msg_min) == (32, 14)
+    assert (L.len_off, L.len_bytes, L.len_add, L.prefix_bytes) == (0, 2, 2, 3)
+
+
+def test_message_record_merges_fields_across_types(feed_ir):
+    """One name at one offset in several types is one slice, not one per type."""
+    L = build_layout(feed_ir, 64)
+    names = [f.name for f in L.msg_fields]
+    assert names[:3] == ["msg_len", "msg_type", "symbol"]
+    assert len(names) == len(set(names)) == 18
+
+    symbol = L.msg_field("symbol")
+    assert set(symbol.types) == {"trade", "quote", "imbalance"}
+    assert symbol.uniform, "symbol sits at byte 3 in all three, so no mux is needed"
+
+    # Every field of simple_feed is uniform: field_extract needs zero muxes.
+    assert all(f.uniform for f in L.msg_fields)
+    assert L.msg_rec_bits == sum(f.width for f in L.msg_fields) == 552
+
+
+def test_record_bit_ranges_do_not_overlap(feed_ir):
+    L = build_layout(feed_ir, 64)
+    seen: set[int] = set()
+    for f in L.msg_fields:
+        bits = set(range(f.rec_lsb, f.rec_lsb + f.width))
+        assert not (bits & seen), f"{f.name} overlaps another field in the record"
+        seen |= bits
+    assert len(seen) == L.msg_rec_bits
+
+
+def test_signedness_survives_the_merge(feed_ir):
+    L = build_layout(feed_ir, 64)
+    assert L.msg_field("price").signed
+    assert L.msg_field("imbalance_qty").signed
+    assert L.msg_field("reason_code").signed
+    assert not L.msg_field("paired_qty").signed
+    assert not L.msg_field("qty").signed
+
+
+def test_conflicting_field_widths_across_types_are_rejected():
+    """One record slot cannot hold a name that is two different shapes."""
+    doc = {
+        "name": "clash",
+        "kind": "framed",
+        "header": {"name": "h", "fields": [{"name": "pad", "bytes": 2}]},
+        "messages": {
+            "length": {"name": "mlen", "bytes": 2},
+            "type": {"name": "mtype", "bytes": 1},
+            "types": [
+                {"name": "a", "code": 1, "fields": [{"name": "v", "bytes": 4}]},
+                {"name": "b", "code": 2, "fields": [{"name": "v", "bytes": 8}]},
+            ],
+        },
+    }
     with pytest.raises(LayoutError) as exc:
-        build_layout(feed_ir, 64)
-    assert "only layered schemas" in str(exc.value)
+        build_layout(build_ir(parse_schema(doc)), 64)
+    assert "cannot hold both" in str(exc.value)
 
 
 def test_all_supported_widths_build(eth_ir):

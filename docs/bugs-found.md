@@ -127,4 +127,83 @@ cannot turn into silently dropping the packet.
 
 ---
 
+## B006 — the message bus and the packet verdict were on different pipeline stages
+
+**Milestone:** M4 · `wirespec/templates/parser_top_framed.sv.j2`
+**Found by:** `tb/integration/test_parser_feed.py::test_every_straddle_position` at `DATA_W=128`
+
+`o_msg_valid` came straight out of `msg_framer` combinationally, while
+`o_pkt_done` was registered. So a packet's first message could be presented in
+the very cycle the *previous* packet's verdict appeared, and a consumer had no
+way to tell which packet it belonged to.
+
+It passed at `DATA_W=64` and failed at 128, which is the tell: an 8-byte beat
+cannot contain a whole 14-byte message, so a new packet's first message can never
+be accepted on its first payload beat. A 16-byte beat can.
+
+The symptom was one extra message record on the first packet and every message
+after it attributed one packet early — 661 mismatches from a single cycle of
+skew.
+
+**Fix:** register `o_msg_valid` / `o_msg_data` so the message bus and the packet
+verdict sit on the same stage.
+
+**Regression:** the straddle sweep at `DATA_W=128`, plus
+`tests/test_emit.py::test_framed_top_registers_the_message_bus`, which fails if
+the register is removed from the template.
+
+---
+
+## B007 — skip mode never subtracted the bytes it retired on entry
+
+**Milestone:** M4 · `rtl/common/msg_framer.sv`
+**Found by:** `tb/integration/test_parser_feed.py::test_malformed_packets`
+
+A message declaring more bytes than the stitch buffer can hold cannot be
+buffered, but the model's verdict still depends on whether that many bytes
+actually arrive — `BAD_LENGTH` if they do, `TRUNCATED` if the packet ends first.
+So the framer counts them past without storing them.
+
+Entering that mode retires the whole buffer in the same cycle, but `skip_left`
+was initialised to the full declared total, ignoring the bytes that had just gone
+by. The count could then never reach zero, so **every** over-long message was
+reported as `TRUNCATED` where the model said `BAD_LENGTH`.
+
+**Fix:** `skip_left <= total - avail`, where `avail` is that slot's byte count at
+the moment skip begins. The skip threshold also moved from `MSG_MAX` to
+`BUF_BYTES`: a message longer than any type but still small enough to buffer
+arrives whole and is rejected on its size, exactly as the model rejects it — and
+that also guarantees `avail < total`, so the subtraction cannot underflow.
+
+**Regression:** `feed_bad_length(100)` in `test_malformed_packets`, which
+declares 125 bytes against a 25-byte type.
+
+---
+
+## B008 — SLOTS was sized by buffer capacity, not by what can actually complete
+
+**Milestone:** M4 · `rtl/common/msg_framer.sv`, `wirespec/layout.py`
+**Found by:** `tb/integration/test_parser_feed.py::test_multiple_messages_per_beat`
+
+Not a correctness bug — an area bug the testbench caught. SLOTS was
+`floor((MSG_MAX-1+KEEP_W)/MSG_MIN)`: how many messages could fit in the buffer.
+The test histograms messages-accepted-per-cycle and found the second slot idle in
+every cycle of every test at `DATA_W=64`.
+
+Because the framer consumes greedily, the leftover at the start of a cycle is
+always one message that was not completable, so its total exceeds the leftover.
+That bounds the count at `ceil(KEEP_W / MSG_MIN)` — 1 at `DATA_W=64`, not 2. The
+derivation is in `msg_framer.sv` and `docs/decisions/0001-rotate-then-slice.md`.
+
+**Fix:** `SLOTS = ceil(KEEP_W / MSG_MIN)`. Rotator counts drop from 2/3/4/6 to
+1/2/3/5 across the four widths, and with them one full message-boundary stage of
+the critical path at every width.
+
+**Regression:** `test_multiple_messages_per_beat` asserts that when `SLOTS > 1`
+more than one message really is accepted in some cycle, so an over-provisioned
+slot count fails rather than sitting there costing area.
+`tests/test_layout.py::test_framed_slot_count` pins the numbers.
+
+---
+
 *(further entries appended as found)*
