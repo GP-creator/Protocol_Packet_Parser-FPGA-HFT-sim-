@@ -259,7 +259,245 @@ runs 600 cycles of random beats against a Python byte-queue model.
 | lint invocations | 40, zero warnings |
 | `./ci/check.sh` | green |
 
+## M5 — verification depth
+
+Measured 2026-08-20. Every number below is also written to `metrics.json` by
+`ci/check.sh` on each run, so this table can be checked against the tree rather
+than trusted.
+
+### Volume, per configuration
+
+Reported per configuration, not summed: the same corpus at two widths is one
+corpus tested twice, and adding the byte counts would double-count it.
+
+| | `parser_eth` w64 | `parser_eth` w128 | `parser_feed` w64 | `parser_feed` w128 |
+|---|---|---|---|---|
+| bytes through the DUT | 1,270,214 | 1,270,214 | 1,174,255 | 1,179,915 |
+| packets | 10,734 | 10,734 | 11,990 | 12,006 |
+| messages | — | — | 41,855 | 42,119 |
+| field comparisons vs golden | 201,322 | 201,322 | 271,795 | 273,411 |
+| payload beats checked | 95,664 | 50,275 | — | — |
+| **mismatches** | **0** | **0** | **0** | **0** |
+
+`parser_eth` runs twice at each width — once against the hand-written M2
+prototype, once against the generated RTL — and all four sets of numbers are
+identical, which is the M3 acceptance criterion still holding at 30x the volume.
+
+`s_axis_tready` fell on **0** cycles. `msg_stitch`'s `o_overflow` asserted **0**
+times outside the test that provokes it deliberately.
+
+### Beats per message (`simple_feed`)
+
+Not messages per packet: how far a single message was spread across ingress
+beats, which is what says whether the stitch buffer was exercised.
+
+| `DATA_W` | spans observed | max |
+|---|---|---|
+| 64 | 2, 3, 4, 5 | **5** — the arithmetic maximum, `ceil((7 + 32) / 8)` |
+| 128 | 1, 2, 3 | **3** — the arithmetic maximum, `ceil((15 + 32) / 16)` |
+
+### Latency
+
+One number per bus, asserted on every record rather than sampled. See
+`docs/decisions/0003` for why the message bus is referenced to the beat *after*
+the one that completes it.
+
+| bus | reference beat | `DATA_W=64` | `DATA_W=128` |
+|---|---|---|---|
+| `eth` record | completing beat | 2 (× 10,734) | 2 (× 10,734) |
+| `eth` payload beat | completing beat | 2 | 2 |
+| `eth` payload tail | completing beat | 3 (4,346 of 95,664) | 3 (4,067 of 50,275) |
+| `feed` header record | completing beat | 2 (× 11,981) | 2 (× 11,997) |
+| `feed` message record | release beat | **3 (× 41,855)** | **3 (× 42,119)** |
+| `feed` packet verdict | final ingress beat | 5 (× 11,990) | 5 (× 12,006) |
+
+Constant, with the payload tail the one documented exception (ADR 0003), and that
+one is arithmetic: the final ingress beat supplies the last byte of two output
+beats.
+
+### Coverage
+
+Bins are generated from the schema by `tb/common/coverage.py` and declared before
+any stimulus runs. Only reachable bins are declared, and reachability is
+*computed*: a 32-byte message cannot span one 8-byte beat, and cannot reach a
+high framer slot. Sampling an undeclared bin is an error, so the reachability
+rule is checked rather than asserted.
+
+| cross | axes | `DATA_W=64` | `DATA_W=128` |
+|---|---|---|---|
+| `type_x_lane` | message type × start byte lane | 32/32 | 64/64 |
+| `type_x_beats` | message type × beats spanned | 7/7 | 8/8 |
+| `type_x_slot` | message type × framer slot | 4/4 | 5/5 |
+| `defect_x_locus` | defect class × where in the packet | 10/10 | 10/10 |
+| `msgs_x_alignment` | message count × packet tail alignment | 10/10 | 10/10 |
+| `field_value_class` | every settable field × value class | 72/72 | 72/72 |
+| `ingress_shape` | tvalid gap × beat position | 6/6 | 6/6 |
+| **total** | | **141/141 closed** | **175/175 closed** |
+
+Two crosses needed directed stimulus rather than volume:
+
+- `field_value_class` — random 64-bit values never land on `2**63-1`, so
+  `feed_extreme_packets()` walks every field to both ends of its range and zero.
+- `type_x_lane` — status messages are 14 bytes and `gcd(14, keep_w) = 2` for any
+  power-of-two beat width, so padding with them only ever reaches the even lanes.
+  `feed_lane_walk()` pads with 25-byte trades instead; 25 is odd, so
+  `25a mod keep_w` walks all of them. Random traffic closed this at 64 and left
+  four lanes open at 128.
+
+`type_x_slot` at 128 declares 5 bins, not 8. Slot 1 can only hold a message small
+enough that `S + (s-1)*MSG_MIN < KEEP_W`, which at 16 bytes per beat means status
+alone. Declaring the other three would have left the cross permanently open
+at 62%.
+
+### Malformed input
+
+| protocol | classes |
+|---|---|
+| `simple_feed` | **31** (13 at M4) |
+| `eth_ipv4_udp` | 14 |
+
+The `simple_feed` corpus is `tb.common.stimulus.malformed_feed_corpus()`, so the
+number in `metrics.json` is the length of that list rather than a count kept in
+step by hand. It covers truncation at three depths in the header and three in a
+message, six length-prefix disagreements, zero and undersized lengths, two
+lengths beyond anything buildable, six unknown type codes, four count-field
+disagreements, and three trailing-fragment lengths — each class both as a
+packet's first message and after a good one. Plus `test_misplaced_tlast`, which
+drives raw beats: `tlast` on the first beat, a packet with no `tlast` at all, and
+`tlast` mid-header.
+
+Every case is asserted to be malformed *by the model* before the RTL's verdict is
+compared, so a fixture that quietly became well-formed fails rather than passing
+vacuously.
+
+### Mutation testing
+
+Ten single-line defects, applied one at a time to a clean tree, each with the
+suite rerun against it. **10/10 killed.**
+
+| mutant | layer | killed by |
+|---|---|---|
+| one field's byte offset moved by one | `ir.py` | 57 pytest objectors |
+| one field flipped to little-endian | `ir.py` | 20, pytest + sim |
+| length-prefix convention inverted | `ir.py` | 70, pytest + sim |
+| unsigned fields sign-extended | `golden.py` | 30, pytest + sim |
+| `msg_stitch` drops its carry | RTL | 17, sim |
+| `msg_rotate` off by one lane | RTL | 19, sim |
+| bytes counted from an invalid beat | RTL | 6, sim |
+| message bus taken combinationally (undo B006) | template | 15, pytest + sim |
+| runt verdict a cycle early (undo B010) | template | 7, sim |
+| tail classifier stops faulting (undo B009) | RTL | 2, sim |
+
+Two decisions make the number mean something:
+
+- **Snapshot tests are deselected during mutation runs.** A snapshot fails on any
+  change to the emitted text, so it would kill every generator or template
+  mutant — including one that changed only whitespace. Counting those would
+  report a far stronger testbench than exists. With them out, a mutant only dies
+  if a check with an opinion about *correctness* objects.
+- **Every stage runs even after one objects.** Otherwise "the RTL comparison
+  never got a chance" is indistinguishable from "the RTL comparison did not
+  care". That is how it came out that the B006 mutant is caught behaviourally as
+  well as by the structural check written for it.
+
+The first version of the length-convention mutant died to a single test, which
+turned out to say something about the code rather than about the suite:
+`IR.expected_length_value` is reached only from tests — the decoder and the
+layout both go through its inverse. The mutant was retargeted to the live path.
+
+### Hand-authored vectors
+
+`tests/test_vectors.py`: 99 checks over literal byte strings with hand-computed
+expected values, importing neither the packet builder nor anything that would let
+the schema define its own correctness.
+
+This closes a gap that was narrower than it first looked. Every other decoder
+test builds a packet with `tb.common.stimulus` and asks the model to recover it —
+and the builder uses fixed `struct` format strings and never reads the IR, so it
+was *already* an independent implementation. What it could not catch is the
+schema and the builder being wrong the same way, because both were written from
+one reading of the protocol.
+
+Checked directly: each of the four generator-level mutants above is caught by
+`tests/test_vectors.py` **alone**, with the rest of the suite deselected.
+
+The file also carries byte maps — flip frame byte *n*, assert exactly the fields
+that byte feeds changed. 42 parametrised cases across the two protocols. That
+catches an offset that is right for one field and wrong for its neighbour, which
+a per-field round trip cannot: a field read one byte early still round-trips if
+the builder writes it one byte early too.
+
+No defect was found by these vectors. Worth stating as a result rather than
+omitting: the schemas, the IR and the builder agree with a byte-level reading of
+both protocols, including sub-byte fields, a 13-bit field straddling a byte
+boundary, and the length-prefix convention.
+
+### Size, and the ratio
+
+| | schema lines | generated RTL lines | ratio |
+|---|---|---|---|
+| `eth_ipv4_udp` | 71 | 610 (3 files) | **8.6x** |
+| `simple_feed` | 92 | 832 (5 files) | **9.0x** |
+| both | 163 | 1,442 | **8.8x** |
+
+At `DATA_W=64`; the generated text does not grow with `DATA_W` since the modules
+are parameterised. 8 hand-written modules in `rtl/common/` (1,156 lines) plus 2
+in `rtl/handwritten/` kept as the M2 prototype; 6 generated modules from 5
+templates (~500 lines of Jinja2).
+
+### Totals at M5
+
+| Quantity | Value |
+|---|---|
+| pytest tests | 275 passed, ~2 s |
+| cocotb tests | 124, over 16 suite runs |
+| lint invocations | 40, **0 warnings** |
+| bytes through the DUT | 1.17–1.27 M **per configuration**, 6 configurations |
+| mismatches | **0** |
+| coverage | 141/141 and 175/175 bins, closed |
+| mutants killed | 10/10 |
+| `./ci/check.sh` | green, 2 m 28 s (3 m 56 s with `--mutate`) |
+
+```
+./ci/check.sh                          # the gate; writes metrics.json
+./ci/check.sh --mutate                 # and the mutation run
+python3 ci/mutate.py --list            # what the mutants are
+WIRESPEC_STRESS_BYTES=20000 make sim   # short loop while editing
+cat metrics.json
+```
+
 ## Defects found
 
-See `docs/bugs-found.md`. Eight so far: `B001` (M1), `B002`–`B005` (M2),
-`B006`–`B008` (M4).
+See `docs/bugs-found.md`. Eleven so far.
+
+| milestone | defects | what they were about |
+|---|---|---|
+| M1 | 1 | `B001`, an invalid-schema fixture testing the wrong rule |
+| M2 | 4 | `B002`–`B005`, byte rotation and packet boundaries |
+| M3 | 0 | — |
+| M4 | 3 | `B006`–`B008`, the framed pipeline |
+| M5 | 3 | `B009`–`B011`, packet-end classification |
+
+By the file each defect lived in:
+
+| file | defects |
+|---|---|
+| `rtl/common/msg_framer.sv` | 4 |
+| `rtl/common/payload_window.sv` | 3 |
+| `wirespec/templates/parser_top_framed.sv.j2` | 2 |
+| `rtl/handwritten/hdr_parse_eth_ipv4_udp.sv` | 1 |
+| schema fixture | 1 |
+
+Two patterns account for most of them, and both are worth naming:
+
+- **A value read one cycle before the register holding it is updated** — `B002`,
+  `B003`, `B009`, `B011`. Four of eleven, in three modules, across three
+  milestones.
+- **Two events that should share a schedule landing a cycle apart** — `B004`,
+  `B006`, `B010`. Three of eleven, and `B010` is `B004` one level up, in a module
+  written after `B004` was fixed.
+
+Every one of the eleven needed a *sequence* to reproduce: a specific preceding
+packet, zero idle cycles, a particular beat alignment, or a defect placed after a
+good message rather than first. None would have been found by checking packets
+one at a time.

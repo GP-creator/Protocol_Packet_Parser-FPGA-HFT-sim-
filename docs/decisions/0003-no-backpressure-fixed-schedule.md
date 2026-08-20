@@ -70,6 +70,46 @@ The per-packet terminal markers `o_empty` and `o_strip_err` are staged to land a
 `B004`: at 2, a short packet's marker overtook the previous packet's tail beat
 and the two packets' results came out of order.
 
+## The framed parser: one number per bus, once the reference is right (M5)
+
+M5 measured the same question for `parser_top_simple_feed` and got a cleaner
+answer than the payload stream's, but only after fixing the *reference point*.
+
+The first attempt measured each record against the ingress beat carrying its
+last byte, which is the reference that works for the header record. Message
+records came out at 3, 4, 5 and 6 cycles, and the spread tracked the source's
+idle gaps exactly.
+
+`payload_window` is a gearbox with a registered input stage, so the beat holding
+a message's last byte is only pushed through when the **following** beat
+arrives — or, at end of packet, when `tlast` triggers the drain a cycle later.
+Measured against that release beat there is one number and no exceptions:
+
+| bus | reference beat | latency |
+|---|---|---|
+| packet header record | the beat carrying the header's last byte | **2** |
+| message record | the beat *after* the one carrying the message's last byte | **3** |
+| packet verdict | the packet's final ingress beat | **5** |
+
+Asserted per record, not sampled — 1.17 MB of traffic at `DATA_W=64` produced
+41,855 message samples at 3 and nothing else, and 1.18 MB at 128 produced 42,119.
+Tail alignment, which does split the payload stream above, does **not** split any
+of these.
+
+The distinction is worth stating plainly because the wrong reference makes a
+fixed-latency pipeline look elastic. A stalled source delays a record, but it
+delays it by exactly the stall: the parser adds no variability of its own, and
+cannot, since it has no queue to add it from.
+
+Two ways a packet can finish, and they must agree. A packet long enough to carry
+a header finishes through the framer; a runt finishes through
+`payload_window`'s strip error, which skips two stages. Those were a cycle
+apart, so with no idle between them a runt's verdict landed on the same cycle as
+its predecessor's and one of the two was lost — `B010`, and the same shape as
+`B004` one level up. Both are now at 5, and the testbench asserts that the two
+populations share a schedule rather than asserting the number 5, so the general
+property is what is pinned.
+
 ## Consequences
 
 - Nothing downstream of the parser may assert backpressure. The payload and

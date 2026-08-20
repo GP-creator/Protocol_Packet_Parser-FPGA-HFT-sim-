@@ -433,8 +433,10 @@ async def test_malformed_packets(dut):
     defects = COVERAGE.crosses["defect_x_locus"]
     assert defects.closed, f"defect loci still open: {defects.holes()}"
     dut._log.info(f"DATA_W={DATA_W}: {len(corpus)} malformed cases, all matched the model")
-    met.write(f"malformed_w{DATA_W}", {"cases": len(corpus),
-                                       "notes": [c.note for c in corpus]})
+    met.write(
+        f"malformed_parser_feed_w{DATA_W}",
+        {"cases": len(corpus), "notes": [c.note for c in corpus]},
+    )
     assert_constant_latency()
 
 
@@ -669,9 +671,19 @@ async def test_coverage_closed_and_latency_constant(dut):
     whether it passes or fails -- a coverage hole is a number worth recording,
     not something to hide by failing early.
     """
+    # How far a single message was actually spread across ingress beats. Not
+    # messages per packet -- beats per message, which is the number that says
+    # whether the stitch buffer was ever really exercised.
+    spans = {b: n for (_t, b), n in COVERAGE.crosses["type_x_beats"].counts.items() if n}
+    by_span: dict[int, int] = {}
+    for b, n in spans.items():
+        by_span[b] = by_span.get(b, 0) + n
+
     payload = {
         "data_w": DATA_W,
         "slots": SLOTS,
+        "beats_per_message": dict(sorted(by_span.items())),
+        "max_beats_per_message": max(by_span) if by_span else 0,
         "packets": RUN["packets"],
         "bytes": RUN["bytes"],
         "messages": RUN["messages"],

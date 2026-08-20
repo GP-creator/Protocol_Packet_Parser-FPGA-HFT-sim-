@@ -95,3 +95,33 @@ all coroutines are parked on the same edge.
 A driver waiting on a `tready` that will never rise advances simulation time
 forever rather than deadlocking, so it never trips a wall-clock timeout. Every
 test in this repo carries a sim-time timeout for that reason.
+
+### 9. Tests in one module run in declaration order, and module state persists
+
+cocotb 2.0 runs a module's tests in the order they are defined, in one process,
+so module-level state survives between them. `tb/integration/test_parser_feed.py`
+leans on that deliberately: `COVERAGE`, `LATENCY` and `RUN` accumulate across
+every test, and the last test in the file is the gate that reads them.
+
+Two things follow. The gate must be declared *last* — moving it up silently turns
+it into a check on a prefix of the suite. And a test that added stimulus without
+going through `run_packets` would contribute traffic without contributing
+coverage or latency samples, so nothing in that file drives the DUT any other
+way. That is the failure mode which makes a coverage number drift away from the
+traffic it claims to describe.
+
+There is also no pytest-style session teardown to hang a "write the results"
+step on, which is why the gate is a test rather than a hook.
+
+### 10. Parameters reach the testbench through the environment, not through cocotb
+
+`cocotb_tools.runner` passes RTL parameters to the *build*, not to the Python
+side, so a testbench that needs to know `DATA_W` has to be told separately.
+`tb/run_sim.py` puts it in `extra_env` and every test module reads
+`int(os.environ["DATA_W"])` at import time to size its own expectations.
+
+The same channel carries `WIRESPEC_SUITE`, so the two suites that share
+`test_parser_eth.py` — the hand-written prototype and the generated RTL — write
+their measurements to separate files instead of one overwriting the other.
+Without it, "identical numbers from two builds" is a claim that cannot be
+checked, because only one set of numbers survives.

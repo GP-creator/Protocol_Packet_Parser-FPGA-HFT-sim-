@@ -102,7 +102,10 @@ def defects() -> dict:
                 "id": ident,
                 "title": title,
                 "milestone": mile.group(1) if mile else None,
-                "where": mile.group(2) if mile and mile.group(2) else None,
+                # A defect can name more than one file; the first is where it
+                # lived. Trailing comma stripped so "msg_framer.sv" and
+                # "msg_framer.sv," do not become two entries in the tally.
+                "where": mile.group(2).rstrip(",") if mile and mile.group(2) else None,
             }
         )
 

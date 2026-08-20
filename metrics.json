@@ -1,7 +1,7 @@
 {
-  "generated_at": "2026-08-20T22:29:48+00:00",
+  "generated_at": "2026-08-20T22:48:01+00:00",
   "git": {
-    "commit": "20049f3",
+    "commit": "a2428af",
     "tag": "m4",
     "dirty": true
   },
@@ -17,12 +17,11 @@
       "M5": 3
     },
     "by_module": {
+      "`rtl/common/msg_framer.sv`": 4,
       "`rtl/common/payload_window.sv`": 3,
-      "`rtl/common/msg_framer.sv`": 3,
       "`wirespec/templates/parser_top_framed.sv.j2`": 2,
       "(schema/tooling)": 1,
-      "`rtl/handwritten/hdr_parse_eth_ipv4_udp.sv`": 1,
-      "`rtl/common/msg_framer.sv`,": 1
+      "`rtl/handwritten/hdr_parse_eth_ipv4_udp.sv`": 1
     },
     "entries": [
       {
@@ -71,7 +70,7 @@
         "id": "B008",
         "title": "SLOTS was sized by buffer capacity, not by what can actually complete",
         "milestone": "M4",
-        "where": "`rtl/common/msg_framer.sv`,"
+        "where": "`rtl/common/msg_framer.sv`"
       },
       {
         "id": "B009",
@@ -114,7 +113,7 @@
     "handwritten_rtl_lines": 1689,
     "template_lines": 963,
     "generator_lines": 2301,
-    "testbench_lines": 6009,
+    "testbench_lines": 6021,
     "modules": {
       "handwritten_common": [
         "axis_reg_slice",
@@ -298,8 +297,317 @@
       ],
       "tool": "verilator --lint-only -Wall"
     },
+    "mutation": {
+      "mutants": 10,
+      "killed": 10,
+      "survived": 0,
+      "stress_bytes": 20000,
+      "results": [
+        {
+          "id": "ir-field-offset",
+          "what": "one field's byte offset moved by one (trade.qty starts a byte late)",
+          "file": "wirespec/ir.py",
+          "killed": true,
+          "killed_by": "pytest",
+          "objectors": [
+            "pytest: tests/test_golden.py::test_one_of_each_message_type",
+            "pytest: tests/test_golden.py::test_signed_fields_at_their_extremes",
+            "pytest: tests/test_golden.py::test_char_field_is_preserved_verbatim",
+            "pytest: tests/test_golden.py::test_many_messages[1]",
+            "pytest: tests/test_golden.py::test_many_messages[2]",
+            "pytest: tests/test_golden.py::test_many_messages[5]",
+            "pytest: tests/test_golden.py::test_many_messages[17]",
+            "pytest: tests/test_golden.py::test_many_messages[40]",
+            "pytest: tests/test_golden.py::test_truncated_feed_message",
+            "pytest: tests/test_golden.py::test_trailing_bytes_shorter_than_a_length_prefix",
+            "pytest: tests/test_golden.py::test_bad_length_prefix[1]",
+            "pytest: tests/test_golden.py::test_count_mismatch_is_reported_after_a_clean_parse"
+          ],
+          "objector_count": 57,
+          "stages_that_objected": [
+            "pytest"
+          ],
+          "stages_run": [
+            "pytest"
+          ],
+          "detail": "E       AssertionError: unexpected defects [DecodeError(defect=<Defect.BAD_LENGTH: 'bad_length'>, offset=16, detail=\"message 'trade' is 26 bytes, length prefix declares 25\")]",
+          "expected_to_notice": "the hand-authored vectors and the builder round trip -- both know the layout without asking the IR",
+          "seconds": 1.8
+        },
+        {
+          "id": "ir-endian-flip",
+          "what": "one field declared little-endian (status.timestamp)",
+          "file": "wirespec/ir.py",
+          "killed": true,
+          "killed_by": "pytest",
+          "objectors": [
+            "pytest: tests/test_golden.py::test_one_of_each_message_type",
+            "pytest: tests/test_golden.py::test_signed_fields_at_their_extremes",
+            "pytest: tests/test_golden.py::test_big_endian_multi_byte_fields",
+            "pytest: tests/test_ir.py::test_segment_view_matches_golden_field_read[feed_ir]",
+            "pytest: tests/test_random_roundtrip.py::test_random_simple_feed",
+            "pytest: tests/test_vectors.py::test_vector_feed_status_message",
+            "sim:parser_feed:64: tb.integration.test_parser_feed.test_one_of_each_type",
+            "sim:parser_feed:64: tb.integration.test_parser_feed.test_every_straddle_position",
+            "sim:parser_feed:64: tb.integration.test_parser_feed.test_lane_walk",
+            "sim:parser_feed:64: tb.integration.test_parser_feed.test_field_extremes",
+            "sim:parser_feed:64: tb.integration.test_parser_feed.test_multiple_messages_per_beat",
+            "sim:parser_feed:64: tb.integration.test_parser_feed.test_back_to_back_packets_no_idle"
+          ],
+          "objector_count": 20,
+          "stages_that_objected": [
+            "pytest",
+            "sim"
+          ],
+          "stages_run": [
+            "pytest",
+            "sim:parser_feed:64"
+          ],
+          "detail": "E           AssertionError: message 'status' at byte 64",
+          "expected_to_notice": "the byte-order vectors, and the RTL/model comparison",
+          "seconds": 5.3
+        },
+        {
+          "id": "ir-length-convention",
+          "what": "length prefix treated as covering the whole message, not what follows it",
+          "file": "wirespec/ir.py",
+          "killed": true,
+          "killed_by": "pytest",
+          "objectors": [
+            "pytest: tests/test_golden.py::test_one_of_each_message_type",
+            "pytest: tests/test_golden.py::test_signed_fields_at_their_extremes",
+            "pytest: tests/test_golden.py::test_char_field_is_preserved_verbatim",
+            "pytest: tests/test_golden.py::test_big_endian_multi_byte_fields",
+            "pytest: tests/test_golden.py::test_many_messages[1]",
+            "pytest: tests/test_golden.py::test_many_messages[2]",
+            "pytest: tests/test_golden.py::test_many_messages[5]",
+            "pytest: tests/test_golden.py::test_many_messages[17]",
+            "pytest: tests/test_golden.py::test_many_messages[40]",
+            "pytest: tests/test_golden.py::test_truncated_feed_message",
+            "pytest: tests/test_golden.py::test_trailing_bytes_shorter_than_a_length_prefix",
+            "pytest: tests/test_golden.py::test_count_mismatch_is_reported_after_a_clean_parse"
+          ],
+          "objector_count": 70,
+          "stages_that_objected": [
+            "pytest",
+            "sim"
+          ],
+          "stages_run": [
+            "pytest",
+            "sim:parser_feed:64"
+          ],
+          "detail": "E       AssertionError: unexpected defects [DecodeError(defect=<Defect.BAD_LENGTH: 'bad_length'>, offset=16, detail=\"message 'trade' is 25 bytes, length prefix declares 23\")]",
+          "expected_to_notice": "every message's declared size, in the model and in field_extract",
+          "seconds": 8.3
+        },
+        {
+          "id": "golden-sign-extend",
+          "what": "unsigned fields sign-extended by the reference decoder",
+          "file": "wirespec/golden.py",
+          "killed": true,
+          "killed_by": "pytest",
+          "objectors": [
+            "pytest: tests/test_golden.py::test_minimal_udp_frame",
+            "pytest: tests/test_golden.py::test_variable_ihl[5]",
+            "pytest: tests/test_golden.py::test_variable_ihl[6]",
+            "pytest: tests/test_golden.py::test_variable_ihl[7]",
+            "pytest: tests/test_golden.py::test_variable_ihl[8]",
+            "pytest: tests/test_golden.py::test_variable_ihl[10]",
+            "pytest: tests/test_golden.py::test_variable_ihl[15]",
+            "pytest: tests/test_golden.py::test_sub_byte_fields_round_trip",
+            "pytest: tests/test_golden.py::test_signed_fields_at_their_extremes",
+            "pytest: tests/test_golden.py::test_length_covers_payload_only",
+            "pytest: tests/test_ir.py::test_segment_view_matches_golden_field_read[eth_ir]",
+            "pytest: tests/test_ir.py::test_segment_view_matches_golden_field_read[feed_ir]"
+          ],
+          "objector_count": 30,
+          "stages_that_objected": [
+            "pytest",
+            "sim"
+          ],
+          "stages_run": [
+            "pytest",
+            "sim:parser_feed:64"
+          ],
+          "detail": "E           AssertionError: layer 'ipv4' mismatch",
+          "expected_to_notice": "the RTL disagreeing with the model on any large unsigned value",
+          "seconds": 7.6
+        },
+        {
+          "id": "stitch-drop-carry",
+          "what": "msg_stitch forgets what it was holding and keeps only this beat",
+          "file": "rtl/common/msg_stitch.sv",
+          "killed": true,
+          "killed_by": "sim:msg_stitch:64",
+          "objectors": [
+            "sim:msg_stitch:64: tb.unit.test_msg_stitch.test_queue_against_a_model",
+            "sim:msg_stitch:64: tb.unit.test_msg_stitch.test_carry_across_beats",
+            "sim:parser_feed:64: tb.integration.test_parser_feed.test_one_of_each_type",
+            "sim:parser_feed:64: tb.integration.test_parser_feed.test_every_straddle_position",
+            "sim:parser_feed:64: tb.integration.test_parser_feed.test_lane_walk",
+            "sim:parser_feed:64: tb.integration.test_parser_feed.test_field_extremes",
+            "sim:parser_feed:64: tb.integration.test_parser_feed.test_multiple_messages_per_beat",
+            "sim:parser_feed:64: tb.integration.test_parser_feed.test_back_to_back_packets_no_idle",
+            "sim:parser_feed:64: tb.integration.test_parser_feed.test_tvalid_gaps",
+            "sim:parser_feed:64: tb.integration.test_parser_feed.test_random_feed",
+            "sim:parser_feed:64: tb.integration.test_parser_feed.test_malformed_packets",
+            "sim:parser_feed:64: tb.integration.test_parser_feed.test_runts_between_full_packets_no_idle"
+          ],
+          "objector_count": 17,
+          "stages_that_objected": [
+            "sim"
+          ],
+          "stages_run": [
+            "sim:msg_stitch:64",
+            "sim:parser_feed:64"
+          ],
+          "detail": "** tb.unit.test_msg_stitch.test_queue_against_a_model                   FAIL",
+          "expected_to_notice": "msg_stitch's own model check, before the parser is even involved",
+          "seconds": 8.7
+        },
+        {
+          "id": "rotate-off-by-one",
+          "what": "msg_rotate shifts one byte lane too far",
+          "file": "rtl/common/msg_rotate.sv",
+          "killed": true,
+          "killed_by": "sim:msg_rotate:64",
+          "objectors": [
+            "sim:msg_rotate:64: tb.unit.test_msg_rotate.test_every_offset",
+            "sim:msg_rotate:64: tb.unit.test_msg_rotate.test_random_windows",
+            "sim:msg_rotate:64: tb.unit.test_msg_rotate.test_offset_zero_is_a_wire",
+            "sim:msg_rotate:64: tb.unit.test_msg_rotate.test_offset_past_the_end_reads_zero",
+            "sim:parser_feed:64: tb.integration.test_parser_feed.test_one_of_each_type",
+            "sim:parser_feed:64: tb.integration.test_parser_feed.test_every_straddle_position",
+            "sim:parser_feed:64: tb.integration.test_parser_feed.test_lane_walk",
+            "sim:parser_feed:64: tb.integration.test_parser_feed.test_field_extremes",
+            "sim:parser_feed:64: tb.integration.test_parser_feed.test_multiple_messages_per_beat",
+            "sim:parser_feed:64: tb.integration.test_parser_feed.test_back_to_back_packets_no_idle",
+            "sim:parser_feed:64: tb.integration.test_parser_feed.test_tvalid_gaps",
+            "sim:parser_feed:64: tb.integration.test_parser_feed.test_random_feed"
+          ],
+          "objector_count": 19,
+          "stages_that_objected": [
+            "sim"
+          ],
+          "stages_run": [
+            "sim:msg_rotate:64",
+            "sim:parser_feed:64"
+          ],
+          "detail": "** tb.unit.test_msg_rotate.test_every_offset                     FAIL",
+          "expected_to_notice": "the exhaustive offset sweep in tb/unit/test_msg_rotate.py",
+          "seconds": 8.7
+        },
+        {
+          "id": "framer-accept-while-idle",
+          "what": "msg_stitch counts bytes from a beat that was never valid",
+          "file": "rtl/common/msg_stitch.sv",
+          "killed": true,
+          "killed_by": "sim:parser_feed:64",
+          "objectors": [
+            "sim:parser_feed:64: tb.integration.test_parser_feed.test_back_to_back_packets_no_idle",
+            "sim:parser_feed:64: tb.integration.test_parser_feed.test_tvalid_gaps",
+            "sim:parser_feed:64: tb.integration.test_parser_feed.test_random_feed",
+            "sim:parser_feed:64: tb.integration.test_parser_feed.test_malformed_packets",
+            "sim:parser_feed:64: tb.integration.test_parser_feed.test_stress",
+            "sim:parser_feed:64: tb.integration.test_parser_feed.test_coverage_closed_and_latency_constant"
+          ],
+          "objector_count": 6,
+          "stages_that_objected": [
+            "sim"
+          ],
+          "stages_run": [
+            "sim:msg_stitch:64",
+            "sim:parser_feed:64"
+          ],
+          "detail": "** tb.integration.test_parser_feed.test_back_to_back_packets_no_idle           FAIL",
+          "expected_to_notice": "any test with an idle cycle in it -- the tvalid-gap runs",
+          "seconds": 8.7
+        },
+        {
+          "id": "top-unregister-msg-bus",
+          "what": "the message bus taken combinationally again (undoes the B006 fix)",
+          "file": "wirespec/templates/parser_top_framed.sv.j2",
+          "killed": true,
+          "killed_by": "pytest",
+          "objectors": [
+            "pytest: tests/test_emit.py::test_framed_top_registers_the_message_bus",
+            "sim:parser_feed:128: tb.integration.test_parser_feed.test_one_of_each_type",
+            "sim:parser_feed:128: tb.integration.test_parser_feed.test_every_straddle_position",
+            "sim:parser_feed:128: tb.integration.test_parser_feed.test_lane_walk",
+            "sim:parser_feed:128: tb.integration.test_parser_feed.test_field_extremes",
+            "sim:parser_feed:128: tb.integration.test_parser_feed.test_multiple_messages_per_beat",
+            "sim:parser_feed:128: tb.integration.test_parser_feed.test_back_to_back_packets_no_idle",
+            "sim:parser_feed:128: tb.integration.test_parser_feed.test_tvalid_gaps",
+            "sim:parser_feed:128: tb.integration.test_parser_feed.test_random_feed",
+            "sim:parser_feed:128: tb.integration.test_parser_feed.test_malformed_packets",
+            "sim:parser_feed:128: tb.integration.test_parser_feed.test_runts_between_full_packets_no_idle",
+            "sim:parser_feed:128: tb.integration.test_parser_feed.test_trailing_fragment_on_the_last_beat"
+          ],
+          "objector_count": 15,
+          "stages_that_objected": [
+            "pytest",
+            "sim"
+          ],
+          "stages_run": [
+            "pytest",
+            "sim:parser_feed:128"
+          ],
+          "detail": "E       AssertionError: assert 'assign o_msg_valid = msg_valid_q;' in '// -----------------------------------------------------------------------------\\n// GENERATED by wirespec 0.1.0 -- d...\\n       ",
+          "expected_to_notice": "tests/test_emit.py's register check, and the straddle sweep at DATA_W=128 where a beat can hold a whole message",
+          "seconds": 8.9
+        },
+        {
+          "id": "top-unregister-strip-err",
+          "what": "the runt verdict taken a cycle early again (undoes the B010 fix)",
+          "file": "wirespec/templates/parser_top_framed.sv.j2",
+          "killed": true,
+          "killed_by": "sim:parser_feed:64",
+          "objectors": [
+            "sim:parser_feed:64: tb.integration.test_parser_feed.test_malformed_packets",
+            "sim:parser_feed:64: tb.integration.test_parser_feed.test_runts_between_full_packets_no_idle",
+            "sim:parser_feed:64: tb.integration.test_parser_feed.test_trailing_fragment_on_the_last_beat",
+            "sim:parser_feed:64: tb.integration.test_parser_feed.test_misplaced_tlast",
+            "sim:parser_feed:64: tb.integration.test_parser_feed.test_stats_match_the_stream_model",
+            "sim:parser_feed:64: tb.integration.test_parser_feed.test_stress",
+            "sim:parser_feed:64: tb.integration.test_parser_feed.test_coverage_closed_and_latency_constant"
+          ],
+          "objector_count": 7,
+          "stages_that_objected": [
+            "sim"
+          ],
+          "stages_run": [
+            "sim:parser_feed:64"
+          ],
+          "detail": "** tb.integration.test_parser_feed.test_malformed_packets                      FAIL",
+          "expected_to_notice": "test_runts_between_full_packets_no_idle",
+          "seconds": 6.3
+        },
+        {
+          "id": "framer-drop-tail-check",
+          "what": "the tail classifier stops faulting (undoes the B009 fix)",
+          "file": "rtl/common/msg_framer.sv",
+          "killed": true,
+          "killed_by": "sim:parser_feed:64",
+          "objectors": [
+            "sim:parser_feed:64: tb.integration.test_parser_feed.test_malformed_packets",
+            "sim:parser_feed:64: tb.integration.test_parser_feed.test_trailing_fragment_on_the_last_beat"
+          ],
+          "objector_count": 2,
+          "stages_that_objected": [
+            "sim"
+          ],
+          "stages_run": [
+            "sim:parser_feed:64"
+          ],
+          "detail": "** tb.integration.test_parser_feed.test_malformed_packets                      FAIL",
+          "expected_to_notice": "test_trailing_fragment_on_the_last_beat",
+          "seconds": 6.0
+        }
+      ]
+    },
     "parsers": {
-      "parser_eth_w128": {
+      "parser_eth_gen_w128": {
+        "suite": "parser_eth_gen",
         "data_w": 128,
         "packets": 10734,
         "bytes": 1270214,
@@ -313,7 +621,38 @@
           "payload_tail": 3
         }
       },
-      "parser_eth_w64": {
+      "parser_eth_gen_w64": {
+        "suite": "parser_eth_gen",
+        "data_w": 64,
+        "packets": 10734,
+        "bytes": 1270214,
+        "field_comparisons": 201322,
+        "payload_beats": 95664,
+        "payload_tail_beats": 4346,
+        "mismatches": 0,
+        "latency": {
+          "record": 2,
+          "payload": 2,
+          "payload_tail": 3
+        }
+      },
+      "parser_eth_hand_w128": {
+        "suite": "parser_eth_hand",
+        "data_w": 128,
+        "packets": 10734,
+        "bytes": 1270214,
+        "field_comparisons": 201322,
+        "payload_beats": 50275,
+        "payload_tail_beats": 4067,
+        "mismatches": 0,
+        "latency": {
+          "record": 2,
+          "payload": 2,
+          "payload_tail": 3
+        }
+      },
+      "parser_eth_hand_w64": {
+        "suite": "parser_eth_hand",
         "data_w": 64,
         "packets": 10734,
         "bytes": 1270214,
@@ -330,6 +669,12 @@
       "parser_feed_w128": {
         "data_w": 128,
         "slots": 2,
+        "beats_per_message": {
+          "1": 3872,
+          "2": 3303,
+          "3": 7123
+        },
+        "max_beats_per_message": 3,
         "packets": 12006,
         "bytes": 1179915,
         "messages": 42119,
@@ -439,6 +784,13 @@
       "parser_feed_w64": {
         "data_w": 64,
         "slots": 1,
+        "beats_per_message": {
+          "2": 5233,
+          "3": 5362,
+          "4": 3420,
+          "5": 6990
+        },
+        "max_beats_per_message": 5,
         "packets": 11990,
         "bytes": 1174255,
         "messages": 41855,
@@ -547,14 +899,28 @@
       }
     },
     "totals_by_config": {
-      "parser_eth_w128": {
+      "parser_eth_gen_w128": {
         "bytes": 1270214,
         "packets": 10734,
         "messages": null,
         "field_comparisons": 201322,
         "mismatches": 0
       },
-      "parser_eth_w64": {
+      "parser_eth_gen_w64": {
+        "bytes": 1270214,
+        "packets": 10734,
+        "messages": null,
+        "field_comparisons": 201322,
+        "mismatches": 0
+      },
+      "parser_eth_hand_w128": {
+        "bytes": 1270214,
+        "packets": 10734,
+        "messages": null,
+        "field_comparisons": 201322,
+        "mismatches": 0
+      },
+      "parser_eth_hand_w64": {
         "bytes": 1270214,
         "packets": 10734,
         "messages": null,
@@ -578,16 +944,24 @@
     },
     "malformed": {
       "eth_ipv4_udp": {
-        "cases": 31,
-        "same_at_every_width": false,
+        "cases": 14,
+        "same_at_every_width": true,
         "by_config": {
-          "malformed_eth_w128": 14,
-          "malformed_eth_w64": 14,
-          "malformed_w128": 31,
-          "malformed_w64": 31
+          "malformed_parser_eth_gen_w128": 14,
+          "malformed_parser_eth_gen_w64": 14,
+          "malformed_parser_eth_hand_w128": 14,
+          "malformed_parser_eth_hand_w64": 14
         }
       },
-      "total_cases": 31
+      "simple_feed": {
+        "cases": 31,
+        "same_at_every_width": true,
+        "by_config": {
+          "malformed_parser_feed_w128": 31,
+          "malformed_parser_feed_w64": 31
+        }
+      },
+      "total_cases": 45
     }
   }
 }
