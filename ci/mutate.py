@@ -47,6 +47,20 @@ sys.path.insert(0, str(ROOT))
 #: survives 20 kB of mixed traffic would survive a million too.
 STRESS = "20000"
 
+#: Snapshot tests are excluded from mutation runs, and the exclusion is the
+#: point rather than a convenience.
+#:
+#: A snapshot fails on *any* change to the emitted text, so it would kill every
+#: mutation that touches the generator or a template -- including one that
+#: changed nothing but whitespace. Counting that as a kill would report a
+#: testbench far stronger than it is: the snapshot proves the output moved, not
+#: that anything noticed the output was now wrong. With these deselected, a
+#: mutant only dies if a check with an opinion about correctness objects.
+NO_SNAPSHOT = (
+    "--deselect=tests/test_emit.py::test_framed_snapshots_match",
+    "--deselect=tests/test_emit.py::test_snapshots_match",
+)
+
 
 @dataclass
 class Mutant:
@@ -195,7 +209,8 @@ def regenerate() -> tuple[int, str]:
 def run_stage(stage: str) -> tuple[bool, str]:
     """True if the stage passed (i.e. failed to notice the mutation)."""
     if stage == "pytest":
-        rc, out = run([sys.executable, "-m", "pytest", "-x", "-q"])
+        # No -x: which tests object, and how many, is the interesting part.
+        rc, out = run([sys.executable, "-m", "pytest", "-q", *NO_SNAPSHOT])
         return rc == 0, out
     m = re.fullmatch(r"sim:(\w+):(\d+)", stage)
     assert m, f"unknown stage {stage!r}"
@@ -224,6 +239,7 @@ def evaluate(mut: Mutant) -> None:
     t0 = time.time()
     killed_by = None
     note = ""
+    objectors: list[str] = []
     try:
         path.write_text(mutated, encoding="utf-8")
         if mut.regen:
@@ -236,6 +252,7 @@ def evaluate(mut: Mutant) -> None:
                 passed, out = run_stage(stage)
                 if not passed:
                     killed_by = stage
+                    objectors = failing_tests(out)
                     note = first_failure(out)
                     break
     finally:
@@ -249,10 +266,29 @@ def evaluate(mut: Mutant) -> None:
         "file": mut.file,
         "killed": killed_by is not None,
         "killed_by": killed_by,
+        "objectors": objectors[:8],
+        "objector_count": len(objectors),
         "detail": note,
         "expected_to_notice": mut.expect,
         "seconds": round(time.time() - t0, 1),
     }
+
+
+def failing_tests(out: str) -> list[str]:
+    """Names of the tests that objected.
+
+    Recorded because "something failed" and "the check written for this failed"
+    are different results, and only the second one says the suite has an opinion
+    about the thing that was broken.
+    """
+    names = re.findall(r"^FAILED (\S+?)(?:\s|$)", out, re.MULTILINE)
+    names += re.findall(r"^\s*\*\* (tb\.\S+)\s+FAIL", out, re.MULTILINE)
+    seen, uniq = set(), []
+    for n in names:
+        if n not in seen:
+            seen.add(n)
+            uniq.append(n)
+    return uniq
 
 
 def first_failure(out: str) -> str:
@@ -298,7 +334,12 @@ def main() -> int:
         evaluate(m)
         r = m.result
         mark = "KILLED  " if r["killed"] else "SURVIVED"
-        print(f"{mark} {r['seconds']:>5.1f}s  {r['killed_by'] or ''}")
+        who = ""
+        if r["objectors"]:
+            who = f"  <- {r['objectors'][0]}"
+            if r["objector_count"] > 1:
+                who += f" (+{r['objector_count'] - 1} more)"
+        print(f"{mark} {r['seconds']:>5.1f}s  {r['killed_by'] or ''}{who}")
 
     killed = [m for m in chosen if m.result["killed"]]
     survived = [m for m in chosen if not m.result["killed"]]
