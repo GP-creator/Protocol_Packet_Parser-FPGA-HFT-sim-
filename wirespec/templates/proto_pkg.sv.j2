@@ -1,0 +1,49 @@
+{{ banner }}
+`timescale 1ns / 1ps
+`default_nettype none
+
+package {{ L.pkg }};
+
+  // Worst-case bytes consumed before the payload begins: the longest
+  // root-to-leaf path through the layer chain.
+{% for lay in layers %}
+  //   {{ pad(lay.name, 12) }} offset {{ pad(lay.static_offset|string if not lay.dynamic else 'dynamic, <= %d' % lay.max_offset, 24) }} {{ lay.bytes_ }} B{% if lay.is_variable %} fixed, up to {{ lay.rec.max_bytes }} B{% endif %}
+
+{% endfor %}
+  localparam int {{ L.upper }}_HDR_BYTES = {{ L.hdr_bytes }};
+  localparam int {{ L.upper }}_LAYERS    = {{ layers|length }};
+
+{% for lay in layers %}
+  localparam int {{ lay.name|upper }}_BYTES = {{ lay.bytes_ }};
+{% endfor %}
+
+  // Bit position of each layer in the record bus's o_layer_valid.
+  typedef enum logic [{{ max(0, (layers|length - 1).bit_length() - 1) }}:0] {
+{% for lay in layers %}
+    LAYER_{{ lay.name|upper }} = {{ max(1, (layers|length - 1).bit_length()) }}'d{{ lay.index }}{{ "," if not loop.last else "" }}
+{% endfor %}
+  } {{ L.name }}_layer_e;
+
+{% for e in L.enums %}
+  typedef enum logic [{{ e.width - 1 }}:0] {
+{% for vname, value in e.values %}
+    {{ e.name|upper }}_{{ vname }} = {{ sv_int(value, e.width) }}{{ "," if not loop.last else "" }}
+{% endfor %}
+  } {{ e.name }};
+
+{% endfor %}
+  // Field offsets, in bits from the start of the layer that carries them.
+  // Emitted for consumers of the record bus; this module does not read them,
+  // hence the narrow waiver.
+  /* verilator lint_off UNUSEDPARAM */
+{% for lay in layers %}
+{% for f in lay.fields %}
+  localparam int {{ pad(lay.name|upper + "_" + f.name|upper + "_OFF", 34) }} = {{ pad(f.ir.bit_offset|string, 4) }};
+  localparam int {{ pad(lay.name|upper + "_" + f.name|upper + "_W", 34) }} = {{ pad(f.width|string, 4) }};
+{% endfor %}
+{% endfor %}
+  /* verilator lint_on UNUSEDPARAM */
+
+endpackage
+
+`default_nettype wire

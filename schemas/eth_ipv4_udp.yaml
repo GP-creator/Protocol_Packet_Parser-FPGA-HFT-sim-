@@ -67,5 +67,5 @@ layers:
     fields:
       - {name: src_port, bits: 16}
       - {name: dst_port, bits: 16}
-      - {name: udp_length, bits: 16}
-      - {name: udp_checksum, bits: 16}
+      - {name: length, bits: 16}
+      - {name: checksum, bits: 16}

@@ -19,16 +19,20 @@ TARGETS=(
   "payload_window:$COMMON rtl/common/payload_window.sv"
   "parser_top_eth_ipv4_udp:@rtl/filelist_m2.f"
 )
-if [ -f rtl/filelist_gen.f ]; then
-  TARGETS+=("parser_top_simple_feed:@rtl/filelist_gen.f")
+
+# Generated RTL, if it has been emitted. Regenerate with `make gen`.
+if [ -f rtl/generated/parser_top_eth_ipv4_udp.sv ]; then
+  TARGETS+=("parser_top_eth_ipv4_udp[generated]:@rtl/filelist_gen.f")
 fi
 
 rc=0
 for entry in "${TARGETS[@]}"; do
   top="${entry%%:*}"
   src="${entry#*:}"
+  label="$top"
+  top="${top%%\[*}"   # strip a "[generated]" tag from the module name
   for w in $WIDTHS; do
-    printf 'lint %-28s DATA_W=%-4s ' "$top" "$w"
+    printf 'lint %-40s DATA_W=%-4s ' "$label" "$w"
     if [ "${src:0:1}" = "@" ]; then
       out=$(verilator --lint-only -Wall -sv --top-module "$top" -GDATA_W="$w" -f "${src:1}" 2>&1)
     else

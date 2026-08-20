@@ -48,19 +48,19 @@ module hdr_parse_eth_ipv4_udp #(
   output logic [47:0]         o_eth_src_mac,
   output logic [15:0]         o_eth_ethertype,
 
-  output logic [3:0]          o_ip_version,
-  output logic [3:0]          o_ip_ihl,
-  output logic [5:0]          o_ip_dscp,
-  output logic [1:0]          o_ip_ecn,
-  output logic [15:0]         o_ip_total_length,
-  output logic [15:0]         o_ip_identification,
-  output logic [2:0]          o_ip_flags,
-  output logic [12:0]         o_ip_frag_offset,
-  output logic [7:0]          o_ip_ttl,
-  output logic [7:0]          o_ip_protocol,
-  output logic [15:0]         o_ip_hdr_checksum,
-  output logic [31:0]         o_ip_src_ip,
-  output logic [31:0]         o_ip_dst_ip,
+  output logic [3:0]          o_ipv4_version,
+  output logic [3:0]          o_ipv4_ihl,
+  output logic [5:0]          o_ipv4_dscp,
+  output logic [1:0]          o_ipv4_ecn,
+  output logic [15:0]         o_ipv4_total_length,
+  output logic [15:0]         o_ipv4_identification,
+  output logic [2:0]          o_ipv4_flags,
+  output logic [12:0]         o_ipv4_frag_offset,
+  output logic [7:0]          o_ipv4_ttl,
+  output logic [7:0]          o_ipv4_protocol,
+  output logic [15:0]         o_ipv4_hdr_checksum,
+  output logic [31:0]         o_ipv4_src_ip,
+  output logic [31:0]         o_ipv4_dst_ip,
 
   output logic [15:0]         o_udp_src_port,
   output logic [15:0]         o_udp_dst_port,
@@ -235,19 +235,19 @@ module hdr_parse_eth_ipv4_udp #(
         o_eth_src_mac       <= eth_src_mac;
         o_eth_ethertype     <= eth_ethertype;
 
-        o_ip_version        <= ip_version;
-        o_ip_ihl            <= ip_ihl;
-        o_ip_dscp           <= ip_dscp;
-        o_ip_ecn            <= ip_ecn;
-        o_ip_total_length   <= ip_total_length;
-        o_ip_identification <= ip_identification;
-        o_ip_flags          <= ip_flags;
-        o_ip_frag_offset    <= ip_frag_offset;
-        o_ip_ttl            <= ip_ttl;
-        o_ip_protocol       <= ip_protocol;
-        o_ip_hdr_checksum   <= ip_hdr_checksum;
-        o_ip_src_ip         <= ip_src_ip;
-        o_ip_dst_ip         <= ip_dst_ip;
+        o_ipv4_version        <= ip_version;
+        o_ipv4_ihl            <= ip_ihl;
+        o_ipv4_dscp           <= ip_dscp;
+        o_ipv4_ecn            <= ip_ecn;
+        o_ipv4_total_length   <= ip_total_length;
+        o_ipv4_identification <= ip_identification;
+        o_ipv4_flags          <= ip_flags;
+        o_ipv4_frag_offset    <= ip_frag_offset;
+        o_ipv4_ttl            <= ip_ttl;
+        o_ipv4_protocol       <= ip_protocol;
+        o_ipv4_hdr_checksum   <= ip_hdr_checksum;
+        o_ipv4_src_ip         <= ip_src_ip;
+        o_ipv4_dst_ip         <= ip_dst_ip;
 
         o_udp_src_port      <= udp_src_port;
         o_udp_dst_port      <= udp_dst_port;

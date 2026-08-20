@@ -62,8 +62,11 @@ SUITES: list[Suite] = [
         sources=PKG + [COMMON / "payload_window.sv"],
         widths=(64, 128),
     ),
+    # The same test module runs against the hand-written M2 prototype and
+    # against the generated RTL. Identical results is the M3 acceptance
+    # criterion, so it is checked by construction rather than by inspection.
     Suite(
-        name="parser_eth",
+        name="parser_eth_hand",
         toplevel="parser_top_eth_ipv4_udp",
         module="tb.integration.test_parser_eth",
         sources=PKG
@@ -73,6 +76,21 @@ SUITES: list[Suite] = [
             COMMON / "payload_window.sv",
             HAND / "hdr_parse_eth_ipv4_udp.sv",
             HAND / "parser_top_eth_ipv4_udp.sv",
+        ],
+        widths=(64, 128),
+    ),
+    Suite(
+        name="parser_eth_gen",
+        toplevel="parser_top_eth_ipv4_udp",
+        module="tb.integration.test_parser_eth",
+        sources=PKG
+        + [
+            GEN / "eth_ipv4_udp_pkg.sv",
+            COMMON / "pkt_align.sv",
+            COMMON / "hdr_accum.sv",
+            COMMON / "payload_window.sv",
+            GEN / "hdr_parse_eth_ipv4_udp.sv",
+            GEN / "parser_top_eth_ipv4_udp.sv",
         ],
         widths=(64, 128),
     ),

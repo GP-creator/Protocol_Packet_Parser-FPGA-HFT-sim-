@@ -1,0 +1,192 @@
+{{ banner }}
+// Header extraction for a layered protocol.
+//
+// Each layer is sliced from its own window of the accumulated header. A layer
+// whose byte offset is known at elaboration gets a constant slice; one that sits
+// behind a variable-length header gets a single run-time shift, shared by all of
+// that layer's fields. That is rotate-then-slice at layer granularity: one
+// shifter per layer, never one mux per field.
+// See docs/decisions/0001-rotate-then-slice.md.
+//
+// The error precedence below mirrors wirespec/golden.py::_decode_layered
+// exactly -- per layer, the fixed-size check, then the declared-length bounds,
+// then the declared-length truncation check, then the next-layer selector.
+
+`timescale 1ns / 1ps
+`default_nettype none
+
+module hdr_parse_{{ L.name }} #(
+  parameter int LEN_W     = pkg_wirespec::WS_LEN_W,
+  parameter int HDR_BYTES = {{ L.pkg }}::{{ L.upper }}_HDR_BYTES,
+  // Derived. Do not override.
+  parameter int WIN_BITS  = HDR_BYTES * 8
+) (
+  input  wire                 clk,
+  input  wire                 rst_n,
+
+  // Live header window from hdr_accum: packet byte k at bits [8k+7:8k].
+  input  wire [WIN_BITS-1:0]  i_win,
+  input  wire [LEN_W-1:0]     i_have,
+  input  wire                 i_done,
+
+  // Combinational header length, for payload_window.
+  output logic                o_strip_valid,
+  output logic [LEN_W-1:0]    o_strip_bytes,
+
+  // Record, registered, one pulse per packet.
+  output logic                o_rec_valid,
+  output logic [{{ layers|length - 1 }}:0]{{ ' ' * (10 - (layers|length - 1)|string|length) }}o_layer_valid,
+  output logic [2:0]          o_err,
+  output logic [LEN_W-1:0]    o_hdr_bytes{{ "," if L.all_fields else "" }}
+
+{% for f in L.all_fields %}
+  output {{ pad(f.decl, 20) }} {{ f.port }}{{ "," if not loop.last else "" }}
+{% endfor %}
+);
+
+  import pkg_wirespec::*;
+
+{% for lay in layers %}
+  // --------------------------------------------------------------------------
+  // layer {{ loop.index }}/{{ layers|length }}: {{ lay.name }} -- {{ lay.bytes_ }} bytes of fields{% if lay.is_variable %}, length = {{ lay.len_expr.field }} * {{ lay.len_expr.scale }} in {{ lay.len_expr.min_bytes }}..{{ lay.len_expr.max_bytes }}{% endif %}
+
+  // --------------------------------------------------------------------------
+  logic [LEN_W-1:0]  off_{{ lay.name }};
+  logic [LEN_W-1:0]  len_{{ lay.name }};
+  logic [{{ lay.bits - 1 }}:0] win_{{ lay.name }};
+
+{% if lay.parent is none %}
+  assign off_{{ lay.name }} = LEN_W'(0);
+{% else %}
+  assign off_{{ lay.name }} = off_{{ lay.parent }} + len_{{ lay.parent }};
+{% endif %}
+
+{% if lay.dynamic %}
+  // The offset is only known at run time, so one shift places the window; every
+  // field below is then a static slice of it.
+  logic [{{ L.sh_w - 1 }}:0] sh_{{ lay.name }};
+  assign sh_{{ lay.name }}  = {{ L.sh_w }}'({off_{{ lay.name }}, 3'b000});
+  assign win_{{ lay.name }} = i_win[sh_{{ lay.name }} +: {{ lay.bits }}];
+{% else %}
+  assign win_{{ lay.name }} = i_win[{{ lay.static_offset * 8 }} +: {{ lay.bits }}];
+{% endif %}
+
+{% for f in lay.fields %}
+  {{ pad(f.decl, 20) }} {{ pad(f.sig, 22) }};  // {{ f.note }}
+{% endfor %}
+
+{% for f in lay.fields %}
+  assign {{ pad(f.sig, 22) }} = {{ slice_expr('win_' + lay.name, f.segments) }};
+{% endfor %}
+
+{% if lay.is_variable %}
+  // Declared length. Clamped for addressing so a nonsense value cannot push a
+  // downstream part-select off the end of the window; len_bad_{{ lay.name }} is what
+  // the error path reads, and it looks at the unclamped value.
+  logic [LEN_W-1:0] len_raw_{{ lay.name }};
+  logic             len_bad_{{ lay.name }};
+  assign len_raw_{{ lay.name }} = LEN_W'({{ lay.sig(lay.len_expr.field) }}) * LEN_W'({{ lay.len_expr.scale }});
+  assign len_bad_{{ lay.name }} = (len_raw_{{ lay.name }} < LEN_W'({{ lay.len_expr.min_bytes }})) ||
+                        (len_raw_{{ lay.name }} > LEN_W'({{ lay.len_expr.max_bytes }}));
+  assign len_{{ lay.name }}     = len_bad_{{ lay.name }} ? LEN_W'({{ lay.len_expr.min_bytes }}) : len_raw_{{ lay.name }};
+{% else %}
+  assign len_{{ lay.name }} = LEN_W'({{ lay.bytes_ }});
+{% endif %}
+
+{% endfor %}
+  // --------------------------------------------------------------------------
+  // Chain walk
+  // --------------------------------------------------------------------------
+{% for lay in layers %}
+  logic active_{{ lay.name }};
+  logic trunc_fix_{{ lay.name }};
+{% if lay.is_variable %}
+  logic trunc_len_{{ lay.name }};
+{% endif %}
+  logic ok_{{ lay.name }};
+  logic settled_{{ lay.name }};
+{% endfor %}
+
+{% for lay in layers %}
+{% if lay.parent is none %}
+  assign active_{{ lay.name }}    = 1'b1;
+{% else %}
+  assign active_{{ lay.name }}    = ok_{{ lay.parent }} && ({{ L.layer(lay.parent).selector_sig }} == {{ sv_int(lay.parent_selector_value, L.layer(lay.parent).selector_width) }});
+{% endif %}
+  assign trunc_fix_{{ lay.name }} = i_have < (off_{{ lay.name }} + LEN_W'({{ lay.bytes_ }}));
+{% if lay.is_variable %}
+  assign trunc_len_{{ lay.name }} = i_have < (off_{{ lay.name }} + len_{{ lay.name }});
+  assign ok_{{ lay.name }}        = active_{{ lay.name }} && !trunc_fix_{{ lay.name }} && !len_bad_{{ lay.name }} && !trunc_len_{{ lay.name }};
+{% else %}
+  assign ok_{{ lay.name }}        = active_{{ lay.name }} && !trunc_fix_{{ lay.name }};
+{% endif %}
+{% if lay.is_terminal %}
+  assign settled_{{ lay.name }}   = ok_{{ lay.name }};
+{% else %}
+  // Settled means the chain stops here: this layer parsed and its selector
+  // names no layer we know, so the payload starts at its end.
+  assign settled_{{ lay.name }}   = ok_{{ lay.name }} && !({% for value, target in lay.children %}({{ lay.selector_sig }} == {{ sv_int(value, lay.selector_width) }}){{ " || " if not loop.last else "" }}{% endfor %});
+{% endif %}
+{% endfor %}
+
+  // First failure along the active path wins, in the same order the model
+  // applies its checks.
+  logic [2:0] err;
+  always_comb begin
+    err = 3'(WS_OK);
+{% for lay in layers %}
+    {{ "if" if loop.first else "end else if" }} (active_{{ lay.name }} && trunc_fix_{{ lay.name }}) begin
+      err = 3'(WS_TRUNCATED);
+{% if lay.is_variable %}
+    end else if (active_{{ lay.name }} && len_bad_{{ lay.name }}) begin
+      err = 3'(WS_BAD_HDR_LEN);
+    end else if (active_{{ lay.name }} && trunc_len_{{ lay.name }}) begin
+      err = 3'(WS_TRUNCATED);
+{% endif %}
+{% endfor %}
+    end
+  end
+
+  logic [{{ layers|length - 1 }}:0] layers_ok;
+  assign layers_ok = { {% for lay in layers|reverse %}ok_{{ lay.name }}{{ ", " if not loop.last else "" }}{% endfor %} };
+
+  // A layer with no defined end has no defined payload: withholding
+  // o_strip_valid makes payload_window report o_strip_err and emit nothing,
+  // rather than shipping bytes measured from a fallback offset. (B005)
+  always_comb begin
+    o_strip_valid = {% for lay in layers %}settled_{{ lay.name }}{{ " || " if not loop.last else ";" }}{% endfor %}
+
+{% for lay in layers|reverse %}
+    {{ "if" if loop.first else "end else if" }} (settled_{{ lay.name }}) begin
+      o_strip_bytes = off_{{ lay.name }} + len_{{ lay.name }};
+{% endfor %}
+    end else begin
+      o_strip_bytes = LEN_W'(0);
+    end
+  end
+
+  // --------------------------------------------------------------------------
+  // Record
+  // --------------------------------------------------------------------------
+  always_ff @(posedge clk) begin
+    if (!rst_n) begin
+      o_rec_valid <= 1'b0;
+    end else begin
+      o_rec_valid <= i_done;
+      if (i_done) begin
+        o_layer_valid <= layers_ok;
+        o_err         <= err;
+        o_hdr_bytes   <= o_strip_bytes;
+{% for lay in layers %}
+
+{% for f in lay.fields %}
+        {{ pad(f.port, 24) }} <= {{ f.sig }};
+{% endfor %}
+{% endfor %}
+      end
+    end
+  end
+
+endmodule
+
+`default_nettype wire

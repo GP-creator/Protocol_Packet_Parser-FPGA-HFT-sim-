@@ -119,6 +119,56 @@ specific preceding packet, and one required zero idle cycles between two packets
 of particular shapes. None would have been found by checking packets one at a
 time.
 
+## M3 — the generator
+
+Measured 2026-08-19.
+
+### The acceptance criterion, met exactly
+
+The same test module (`tb/integration/test_parser_eth.py`) runs against the
+hand-written M2 prototype and against the generated RTL, as two suites. The
+results are not merely both-passing but **numerically identical**, including
+simulation time:
+
+| | hand-written | generated |
+|---|---|---|
+| `DATA_W=64` | 1,000 pkts, 18,982 field comparisons, 11,323 payload beats (497 tails), 35,810 ns | *identical* |
+| `DATA_W=128` | 1,000 pkts, 18,982 field comparisons, 5,899 payload beats (439 tails), 18,418 ns | *identical* |
+
+Identical sim time means the generated parser is cycle-for-cycle the same
+machine, not merely a functionally equivalent one.
+
+### Size
+
+| | lines |
+|---|---|
+| `wirespec/templates/*.j2` | 419 |
+| generated RTL (`DATA_W=64`) | 602 |
+| ...`eth_ipv4_udp_pkg.sv` | 96 |
+| ...`hdr_parse_eth_ipv4_udp.sv` | 285 |
+| ...`parser_top_eth_ipv4_udp.sv` | 221 |
+
+`hdr_parse` contains **one** run-time shifter, for the one layer (`udp`) whose
+offset is not known at elaboration. A mux-per-field implementation would need
+four. `tests/test_emit.py::test_one_shift_per_dynamic_layer_and_none_per_field`
+asserts the count.
+
+### Totals at M3
+
+| Quantity | Value |
+|---|---|
+| pytest tests | 153 passed, 1.21 s |
+| cocotb suite runs | 10 (was 8; the generated parser adds 2) |
+| verilator lint targets | 6 × 4 widths = 24 invocations, **zero warnings** |
+| `./ci/check.sh` | green |
+
+```
+make gen DATA_W=64          # emit into rtl/generated/
+make gen-sample             # refresh the checked-in sample
+python3 -m wirespec.cli info --schema schemas/simple_feed.yaml
+WIRESPEC_UPDATE_SNAPSHOTS=1 python3 -m pytest tests/test_emit.py
+```
+
 ## Defects found
 
 See `docs/bugs-found.md`.

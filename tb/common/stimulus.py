@@ -140,8 +140,8 @@ def build_eth_ipv4_udp(
             expect["udp"] = {
                 "src_port": src_port,
                 "dst_port": dst_port,
-                "udp_length": udp_len,
-                "udp_checksum": udp_checksum,
+                "length": udp_len,
+                "checksum": udp_checksum,
             }
             expect["payload"] = payload
             expect["payload_offset"] = 14 + 20 + opt_len + 8

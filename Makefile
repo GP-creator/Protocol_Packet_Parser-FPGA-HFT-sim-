@@ -13,7 +13,7 @@ GEN_DIR    := rtl/generated
 DATA_W     ?= 64
 PROTOS     := eth_ipv4_udp simple_feed
 
-.PHONY: all gen lint sim waves test check clean help
+.PHONY: all gen gen-sample lint sim waves test check clean help
 
 help:
 	@echo "make gen    [DATA_W=64]  generate RTL from the schemas"
@@ -30,7 +30,17 @@ test:
 	$(PYTHON) -m pytest
 
 gen:
-	@echo "gen: not implemented until M3" >&2; exit 1
+	@for s in $(PROTOS); do \
+	  if $(PYTHON) -m wirespec.cli gen --schema $(SCHEMA_DIR)/$$s.yaml \
+	       --data-w $(DATA_W) --out $(GEN_DIR); then :; else \
+	    echo "  ($$s not generated yet -- see 'wirespec check')"; fi; \
+	done
+
+# One generated sample is checked in so a reader can see the output without
+# running the tool. tests/test_emit.py fails if it drifts from the templates.
+gen-sample:
+	$(PYTHON) -m wirespec.cli gen --schema $(SCHEMA_DIR)/eth_ipv4_udp.yaml \
+	  --data-w 64 --out $(GEN_DIR)/sample --quiet
 
 lint:
 	@./ci/lint.sh
