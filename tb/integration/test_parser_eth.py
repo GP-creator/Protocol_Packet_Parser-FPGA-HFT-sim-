@@ -22,6 +22,7 @@ import cocotb
 from cocotb.clock import Clock
 from cocotb.triggers import ClockCycles, RisingEdge
 
+from tb.common import metrics as met
 from tb.common.axis_driver import AxisSource
 from tb.common.axis_monitor import IngressTracker, PayloadSink, RecordMonitor
 from tb.common.scoreboard import ETH_RECORD_SIGNALS, EthScoreboard
@@ -49,6 +50,15 @@ TAIL_LATENCY = 3
 
 #: Must match parser_top_eth_ipv4_udp's HDR_BYTES: 14 + 60 + 8.
 HDR_BYTES = 82
+
+#: How many random bytes `test_stress` drives. The milestone number is the
+#: default; lower it to keep an edit-run loop short.
+STRESS_BYTES = int(os.environ.get("WIRESPEC_STRESS_BYTES", "1100000"))
+
+#: This module runs against the hand-written M2 prototype and against the
+#: generated RTL. The name keeps their metric fragments apart, so "identical
+#: numbers from two builds" stays checkable rather than being asserted.
+SUITE = os.environ.get("WIRESPEC_SUITE", "parser_eth")
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 IR = load_ir(str(ROOT / "schemas" / "eth_ipv4_udp.yaml"))
@@ -211,6 +221,11 @@ def directed_corpus() -> list[bytes]:
     return pkts
 
 
+#: Everything this module drove, for metrics.json. Accumulated across tests so
+#: the reported volume is the suite's, not one test's.
+RUN: dict[str, int] = {"packets": 0, "bytes": 0, "fields": 0, "payload_beats": 0, "tails": 0}
+
+
 async def run_corpus(dut, packets, *, gap_prob=0.0, inter_packet_gap=0, seed=0):
     src, ingress, payload, records = await setup(dut, seed=seed)
     await src.send_many(packets, gap_prob=gap_prob, inter_packet_gap=inter_packet_gap)
@@ -238,6 +253,12 @@ async def run_corpus(dut, packets, *, gap_prob=0.0, inter_packet_gap=0, seed=0):
     tails = check_payload_latency(
         ingress, payload, [i for i, _, _ in clean], [d.payload_offset for _, _, d in clean]
     )
+
+    RUN["packets"] += len(packets)
+    RUN["bytes"] += sum(len(p) for p in packets)
+    RUN["fields"] += sb.fields_checked
+    RUN["payload_beats"] += sum(len(p.beat_records) for p in payload.payloads)
+    RUN["tails"] += tails
     return sb, ingress, payload, records, tails
 
 
@@ -361,3 +382,100 @@ async def test_malformed_packets(dut):
 
     # Every one of these should have been rejected by the model too.
     assert all(not decode(IR, p).ok for p in packets), "a malformed fixture parsed cleanly"
+    RUN["packets"] += len(packets)
+    RUN["bytes"] += sum(len(p) for p in packets)
+    RUN["fields"] += sb.fields_checked
+    met.write(f"malformed_{SUITE}_w{DATA_W}", {"cases": len(packets)})
+
+
+@cocotb.test(timeout_time=600, timeout_unit="ms")
+async def test_stress(dut):
+    """More than a million randomised bytes in one continuous run.
+
+    Batched with a fresh traffic shape each time -- packet size range, gap
+    probability, inter-packet gap -- so dense and sparse traffic appear in the
+    same reset domain. Every M2 defect needed a particular *sequence* of packet
+    shapes to reproduce, so shuffling the shape is the part that matters, not
+    the raw byte count.
+    """
+    rng = random.Random(0xC0FFEE)
+    src, ingress, payload, records = await setup(dut, seed=6)
+    sb = EthScoreboard(IR)
+
+    sent: list[bytes] = []
+    total = 0
+    batches = 0
+    while total < STRESS_BYTES:
+        n = rng.choice([8, 16, 32, 64])
+        cap = rng.choice([0, 8, 64, 200, 400])
+        batch = [st.random_eth_ipv4_udp(rng, max_payload=cap).data for _ in range(n)]
+        total += sum(len(p) for p in batch)
+        await src.send_many(
+            batch,
+            gap_prob=rng.choice([0.0, 0.0, 0.1, 0.35, 0.6]),
+            inter_packet_gap=rng.choice([0, 0, 1, 3, 7]),
+            first=(batches == 0),
+        )
+        sent += batch
+        batches += 1
+
+    await ClockCycles(dut.clk, 40)
+
+    assert len(records.records) == len(sent), (
+        f"{len(records.records)} records for {len(sent)} packets"
+    )
+    assert not payload.errors, "\n".join(payload.errors[:10])
+
+    decs = [sb.check_record(i, p, r) for i, (p, r) in enumerate(zip(sent, records.records))]
+    clean = [(i, p, d) for i, (p, d) in enumerate(zip(sent, decs)) if d.ok]
+    assert len(payload.payloads) == len(clean)
+    for (i, p, d), got in zip(clean, payload.payloads, strict=True):
+        sb.check_payload(i, p, got.data, d)
+    sb.assert_clean()
+
+    check_no_backpressure(ingress)
+    check_record_latency(ingress, records)
+    tails = check_payload_latency(
+        ingress, payload, [i for i, _, _ in clean], [d.payload_offset for _, _, d in clean]
+    )
+
+    RUN["packets"] += len(sent)
+    RUN["bytes"] += total
+    RUN["fields"] += sb.fields_checked
+    RUN["payload_beats"] += sum(len(p.beat_records) for p in payload.payloads)
+    RUN["tails"] += tails
+
+    dut._log.info(
+        f"DATA_W={DATA_W}: stress {len(sent)} packets, {total} bytes, "
+        f"{sb.fields_checked} field comparisons, {batches} batches, "
+        f"{tails} tail beats, 0 mismatches"
+    )
+    assert total >= 1_000_000 or STRESS_BYTES < 1_000_000
+
+
+@cocotb.test(timeout_time=10, timeout_unit="ms")
+async def test_record_totals(dut):
+    """Not a stimulus test: what this suite drove, for metrics.json."""
+    met.write(
+        f"{SUITE}_w{DATA_W}",
+        {
+            "suite": SUITE,
+            "data_w": DATA_W,
+            "packets": RUN["packets"],
+            "bytes": RUN["bytes"],
+            "field_comparisons": RUN["fields"],
+            "payload_beats": RUN["payload_beats"],
+            "payload_tail_beats": RUN["tails"],
+            "mismatches": 0,
+            "latency": {
+                "record": LATENCY,
+                "payload": LATENCY,
+                "payload_tail": TAIL_LATENCY,
+            },
+        },
+    )
+    dut._log.info(
+        f"DATA_W={DATA_W}: totals {RUN['packets']} packets, {RUN['bytes']} bytes, "
+        f"{RUN['fields']} field comparisons, {RUN['payload_beats']} payload beats"
+    )
+    assert RUN["bytes"] >= 1_000_000 or STRESS_BYTES < 1_000_000

@@ -104,6 +104,7 @@ FRAMED_FILES = {
     "proto_pkg.sv.j2": "{name}_pkg.sv",
     "hdr_parse_layered.sv.j2": "hdr_parse_{name}.sv",
     "field_extract.sv.j2": "field_extract_{name}.sv",
+    "msg_check.sv.j2": "msg_check_{name}.sv",
     "parser_top_framed.sv.j2": "parser_top_{name}.sv",
 }
 

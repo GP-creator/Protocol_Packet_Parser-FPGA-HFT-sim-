@@ -126,6 +126,7 @@ SUITES: list[Suite] = [
             COMMON / "stats.sv",
             GEN / "hdr_parse_simple_feed.sv",
             GEN / "field_extract_simple_feed.sv",
+            GEN / "msg_check_simple_feed.sv",
             GEN / "parser_top_simple_feed.sv",
         ],
         widths=(64, 128),
@@ -157,6 +158,11 @@ def run_one(suite: Suite, width: int, *, waves: bool, verbose: bool) -> bool:
 
     env = dict(os.environ)
     env["DATA_W"] = str(width)
+    # The same test module runs against the hand-written prototype and against
+    # the generated RTL. Their metric fragments must not overwrite each other:
+    # "identical numbers from two builds" is the M3 claim, and it can only be
+    # checked if both sets survive.
+    env["WIRESPEC_SUITE"] = suite.name
     env["PYTHONPATH"] = str(ROOT) + os.pathsep + env.get("PYTHONPATH", "")
 
     results = runner.test(
@@ -176,7 +182,12 @@ def run_one(suite: Suite, width: int, *, waves: bool, verbose: bool) -> bool:
     total, failed = get_results(results)
     status = "PASS" if failed == 0 else "FAIL"
     print(f"  {tag}: {total - failed}/{total} passed  [{status}]", flush=True)
+    TALLY.append({"suite": suite.name, "data_w": width, "tests": total, "failed": failed})
     return failed == 0
+
+
+#: Per-suite results, folded into one metrics fragment at the end of main().
+TALLY: list[dict] = []
 
 
 def main() -> int:
@@ -205,6 +216,24 @@ def main() -> int:
     if ran == 0:
         print("no suites selected", file=sys.stderr)
         return 2
+
+    # Only a full run describes the whole testbench, so a filtered one says so
+    # rather than letting `metrics.json` report a subset as if it were the total.
+    from tb.common import metrics as met
+
+    met.write(
+        "cocotb",
+        {
+            "suite_runs": ran,
+            "tests": sum(t["tests"] for t in TALLY),
+            "failed": sum(t["failed"] for t in TALLY),
+            "suites": len({t["suite"] for t in TALLY}),
+            "widths": sorted({t["data_w"] for t in TALLY}),
+            "filtered": bool(args.filter or args.width),
+            "by_suite": TALLY,
+        },
+    )
+
     print(f"\n{ran} suite run(s): {'all passed' if ok else 'FAILURES'}")
     return 0 if ok else 1
 

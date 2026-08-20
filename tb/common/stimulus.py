@@ -401,29 +401,80 @@ def feed_truncated_message(rng: random.Random | None = None, cut: int = 5) -> Pa
     return Packet(pkt.data[:-cut], {}, note=f"last message short by {cut} bytes")
 
 
-def feed_bad_length(delta: int = 3) -> Packet:
+def _lead_msgs(lead: int) -> list[tuple[bytes, dict]]:
+    """`lead` well-formed messages to sit in front of a defective one.
+
+    A defect in a packet's *first* message and a defect after a good one are
+    different tests: the second one requires the framer to have retired state
+    correctly before it can even reach the bad message.
+    """
+    return [make_status(timestamp=i) for i in range(lead)]
+
+
+def feed_bad_length(delta: int = 3, *, lead: int = 0) -> Packet:
     """Length prefix disagrees with the size implied by the type code."""
     body, _ = make_trade(length_override=23 + delta)
     pad = bytes(max(0, delta))
+    head = build_feed_packet(_lead_msgs(lead)).data
     return Packet(
-        build_feed_packet([]).data + body + pad,
+        head + body + pad,
         {},
-        note=f"trade length prefix off by {delta:+d}",
+        note=f"trade length prefix off by {delta:+d} after {lead} good message(s)",
     )
 
 
-def feed_zero_length() -> Packet:
+def feed_zero_length(*, lead: int = 0) -> Packet:
     body = struct.pack(">HB", 0, MSG_TRADE) + bytes(22)
-    return Packet(build_feed_packet([]).data + body, {}, note="zero length prefix")
+    return Packet(
+        build_feed_packet(_lead_msgs(lead)).data + body,
+        {},
+        note=f"zero length prefix after {lead} good message(s)",
+    )
 
 
-def feed_unknown_type(code: int = 0x7F) -> Packet:
+def feed_unknown_type(code: int = 0x7F, *, lead: int = 0) -> Packet:
     body = struct.pack(">HB", 11, code) + bytes(10)
-    return Packet(build_feed_packet([]).data + body, {}, note=f"unknown type 0x{code:02x}")
+    return Packet(
+        build_feed_packet(_lead_msgs(lead)).data + body,
+        {},
+        note=f"unknown type 0x{code:02x} after {lead} good message(s)",
+    )
 
 
-def feed_count_mismatch() -> Packet:
-    return build_feed_packet([make_trade(), make_quote()], count_override=5)
+def feed_count_mismatch(declared: int = 5, actual: int = 2) -> Packet:
+    msgs = [make_trade(), make_quote(), make_status(), make_imbalance()][:actual]
+    return build_feed_packet(msgs, count_override=declared)
+
+
+def feed_trailer(n: int = 1) -> Packet:
+    """A clean packet with `n` stray bytes after the last message.
+
+    Fewer than 3 trailing bytes cannot even carry a length prefix, which is a
+    different path through the framer from a prefix that parses and then fails.
+    """
+    pkt = build_feed_packet([make_trade()])
+    return Packet(pkt.data + bytes(n), {}, note=f"{n} stray trailing byte(s)")
+
+
+def feed_huge_length(value: int = 0xFFFF) -> Packet:
+    """A length prefix far larger than the stitch buffer can ever hold.
+
+    The framer cannot buffer it, so it counts the bytes past instead -- the
+    path B007 lived on. Whether the verdict is BAD_LENGTH or TRUNCATED then
+    depends on whether the packet really is that long.
+    """
+    body = struct.pack(">HB", value, MSG_TRADE) + bytes(60)
+    return Packet(
+        build_feed_packet([]).data + body, {}, note=f"length prefix {value}"
+    )
+
+
+def feed_length_below_prefix(value: int = 0) -> Packet:
+    """A declared length too small to cover even the type byte it introduces."""
+    body = struct.pack(">HB", value, MSG_STATUS) + bytes(11)
+    return Packet(
+        build_feed_packet([]).data + body, {}, note=f"length {value} below the prefix"
+    )
 
 
 MALFORMED_FEED_BUILDERS = (
@@ -433,4 +484,129 @@ MALFORMED_FEED_BUILDERS = (
     feed_zero_length,
     feed_unknown_type,
     feed_count_mismatch,
+    feed_trailer,
+    feed_huge_length,
+    feed_length_below_prefix,
 )
+
+
+def malformed_feed_corpus() -> list[Packet]:
+    """Every malformed class the model can produce, at every locus we can put it.
+
+    Kept here rather than inline in the testbench so `tests/` and `tb/` exercise
+    the same list, and so the count in `metrics.json` is the length of one
+    object rather than a number someone remembered to update.
+    """
+    return [
+        # -- truncated header, at several depths
+        feed_truncated_header(1),
+        feed_truncated_header(9),
+        feed_truncated_header(15),
+        # -- truncated message, cut at different points
+        feed_truncated_message(cut=1),
+        feed_truncated_message(cut=5),
+        feed_truncated_message(cut=22),
+        # -- length prefix disagreeing with the type, first and later
+        feed_bad_length(1),
+        feed_bad_length(-1),
+        feed_bad_length(3),
+        feed_bad_length(100),  # more than the stitch buffer holds
+        feed_bad_length(3, lead=1),
+        feed_bad_length(-1, lead=3),
+        # -- zero and undersized length
+        feed_zero_length(),
+        feed_zero_length(lead=2),
+        feed_length_below_prefix(0),
+        feed_length_below_prefix(1),
+        # -- lengths beyond anything buildable
+        feed_huge_length(0xFFFF),
+        feed_huge_length(0x0100),
+        # -- unknown type codes, first and later
+        feed_unknown_type(0x00),
+        feed_unknown_type(0x05),  # one past the last defined code
+        feed_unknown_type(0x7F),
+        feed_unknown_type(0xFF),
+        feed_unknown_type(0x7F, lead=1),
+        feed_unknown_type(0x00, lead=4),
+        # -- the count field disagreeing in both directions
+        feed_count_mismatch(5, 2),
+        feed_count_mismatch(0, 2),
+        feed_count_mismatch(0xFFFF, 1),
+        feed_count_mismatch(1, 0),
+        # -- stray bytes after the last message
+        feed_trailer(1),
+        feed_trailer(2),
+        feed_trailer(3),
+    ]
+
+
+# --------------------------------------------------------------------------
+# Directed extremes, for the value-class coverage bins
+# --------------------------------------------------------------------------
+
+
+def _extreme_round(r: int) -> tuple[int, int, int, int, int, int, bytes]:
+    """Field values for round `r` of the extremes walk.
+
+    Five rounds close every bin `tb.common.coverage` declares: signed fields
+    need {min, neg, zero, pos, max}, unsigned {zero, mid, max}, and character
+    fields {zero, mixed, ones}.
+    """
+    s64 = [-(2**63), -1, 0, 1, 2**63 - 1][r]
+    s32 = [-(2**31), -1, 0, 1, 2**31 - 1][r]
+    s16 = [-(2**15), -1, 0, 1, 2**15 - 1][r]
+    u64 = [0, 1, 2**64 - 1, 1, 0][r]
+    u32 = [0, 1, 2**32 - 1, 1, 0][r]
+    u16 = [0, 1, 2**16 - 1, 1, 0][r]
+    u8 = [0, 1, 255, 1, 0][r]
+    sym = [bytes(8), b"BRK.B   ", b"\xff" * 8, b"AAPL    ", bytes(8)][r]
+    return s64, s32, s16, u64, u32, u16, u8, sym  # type: ignore[return-value]
+
+
+def feed_lane_walk(keep_w: int) -> list[Packet]:
+    """One packet per byte lane, each starting a message on that lane.
+
+    Padding with status messages alone cannot do this: status is 14 bytes and
+    `gcd(14, keep_w)` is 2 for every power-of-two beat width, so it only ever
+    reaches the even lanes. Trades are 25 bytes, and 25 is odd, so `25*a mod
+    keep_w` walks all of them. Random traffic gets there eventually at
+    DATA_W=64 and left four lanes open at 128 -- this makes it deterministic.
+    """
+    out = []
+    for lane in range(keep_w):
+        a = next(a for a in range(keep_w) if (25 * a) % keep_w == lane)
+        msgs = [make_trade(qty=i) for i in range(a)]
+        msgs += [make_trade(), make_quote(), make_status(), make_imbalance()]
+        out.append(build_feed_packet(msgs, seq_num=lane + 1))
+    return out
+
+
+def feed_extreme_packets() -> list[Packet]:
+    """One packet per round, each holding one message of every type.
+
+    Random stimulus will not land on 2**63-1 exactly, so the ends of every
+    field's range are walked deliberately. Without this the value-class bins
+    sit at the two middle bins forever and the coverage number quietly means
+    'we sent some numbers'.
+    """
+    out = []
+    for r in range(5):
+        s64, s32, s16, u64, u32, u16, u8, sym = _extreme_round(r)
+        msgs = [
+            make_trade(symbol=sym, price=s64, qty=u32, side=u8, trade_flags=u8),
+            make_quote(symbol=sym, bid_px=s32, ask_px=s32, bid_sz=u16, ask_sz=u16),
+            make_status(session_state=u8, reason_code=s16, timestamp=u64),
+            make_imbalance(
+                symbol=sym,
+                paired_qty=u64,
+                imbalance_qty=s64,
+                ref_px=s32,
+                auction_type=u8,
+            ),
+        ]
+        out.append(
+            build_feed_packet(
+                msgs, session_id=u32, seq_num=u64, reserved=u16
+            )
+        )
+    return out

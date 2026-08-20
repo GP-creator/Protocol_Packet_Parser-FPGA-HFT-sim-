@@ -1,0 +1,29 @@
+M5 (wip): verification depth -- coverage, latency, stress, metrics
+
+Stimulus and checking:
+  - tb/common/coverage.py: hand-rolled functional coverage with the bins
+    derived from the schema, and a reachability rule so the denominator
+    contains only bins that can be hit.
+  - 1.1 MB of randomised traffic through the DUT per configuration, batched
+    with a fresh traffic shape each time.
+  - malformed corpus grown from 13 cases to 31, plus misplaced tlast.
+  - tests/test_vectors.py: 99 checks over hand-authored byte vectors with
+    hand-computed expected values, and byte maps that pin which byte feeds
+    which field.
+  - latency is now asserted per record against the beat that releases it,
+    rather than the beat that completes it -- see the comment in
+    test_parser_feed.py for why that is the right reference.
+
+Defects found and fixed:
+  - B009 a trailing fragment on the packet's last beat was never classified,
+        so the verdict depended on DATA_W rather than on the packet.
+  - B010 a runt packet's verdict landed a cycle early and overwrote its
+        predecessor's; a packet could be parsed and never reported.
+  - B011 skip mode entered on the last beat never expired, so a message
+        declaring 65,537 bytes finished clean.
+
+Metrics:
+  - ci/check.sh writes metrics.json every run, merged from per-stage
+    fragments in build/metrics/.
+  - ci/collect_metrics.py: static size and defect facts plus measured ones.
+  - ci/mutate.py: mutation testing harness (not yet run).

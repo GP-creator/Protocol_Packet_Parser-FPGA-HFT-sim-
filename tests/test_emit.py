@@ -85,6 +85,68 @@ def test_framed_top_registers_the_message_bus(feed_files):
     assert "assign o_msg_valid = msg_valid_q;" in text_
 
 
+def test_framed_top_registers_the_strip_error(feed_files):
+    """B010: both ways a packet can finish must land on the same cycle.
+
+    A runt too short to carry a header is finished by payload_window rather
+    than by the framer, one stage earlier. Undelayed, its verdict collides with
+    the previous packet's when there is no idle cycle between them, and one of
+    the two is lost.
+    """
+    text_ = next(f.text for f in feed_files if f.path.name.startswith("parser_top"))
+    assert "strip_err_q <= pay_strip_err;" in text_
+    assert "assign pkt_done_any  = fr_done || strip_err_q;" in text_
+    assert "pay_strip_err ?" not in text_, "something still reads the undelayed error"
+
+
+def test_framed_top_instantiates_the_tail_classifier(feed_files):
+    """B009: the framer needs a verdict on what is left after the last message.
+
+    Without it, a trailing fragment exposed on the packet's final beat is never
+    classified and the packet reads TRUNCATED whatever it said -- so the verdict
+    depends on where the beat boundaries fell rather than on the bytes.
+    """
+    names = [f.path.name for f in feed_files]
+    assert "msg_check_simple_feed.sv" in names
+
+    top = next(f.text for f in feed_files if f.path.name.startswith("parser_top"))
+    assert "msg_check_simple_feed" in top
+    assert ".o_type_ok(slot_type_ok[SLOTS])" in top
+    assert "parameter int CHK    = SLOTS + 1," in top
+
+
+def test_tail_classifier_reads_only_the_prefix(feed_files):
+    """The tail costs a type decode, not a second full extractor.
+
+    If it ever grew a message-window input it would be a second full rotator in
+    the fault path, which is the cost B008 went to some trouble to remove.
+    """
+    check = next(f.text for f in feed_files if f.path.name.startswith("msg_check"))
+    assert "i_pre" in check
+    assert "MSG_BITS" not in check, "the tail classifier took a whole message window"
+    assert "o_rec" not in check, "the tail classifier is extracting fields"
+
+    framer = (ROOT / "rtl" / "common" / "msg_framer.sv").read_text(encoding="utf-8")
+    assert ".OUT_BYTES(PREFIX)" in framer, "the tail rotator is not the narrow one"
+    assert framer.count("msg_rotate #(") == 2, (
+        "msg_framer should instantiate exactly two rotator shapes: the slot "
+        "chain's full-width one and the tail's prefix-only one"
+    )
+
+
+def test_msg_check_agrees_with_field_extract_on_every_size(feed_files, feed_ir):
+    """The two size checks are written from the same layout by two templates.
+
+    They must agree, or a message would be accepted by a slot and rejected by
+    the tail (or the reverse) depending only on where it landed.
+    """
+    check = next(f.text for f in feed_files if f.path.name.startswith("msg_check"))
+    extract = next(f.text for f in feed_files if "field_extract" in f.path.name)
+    for m in build_layout(feed_ir, 64).messages:
+        assert f"(is_{m.name} && (total == TOT_W'({m.bytes_})))" in check
+        assert f"(is_{m.name} && (i_total == TOT_W'({m.bytes_})))" in extract
+
+
 # --------------------------------------------------------------------------
 # Snapshots
 # --------------------------------------------------------------------------

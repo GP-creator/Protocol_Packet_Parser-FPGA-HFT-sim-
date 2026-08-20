@@ -14,8 +14,9 @@
 //   pkt_align -> hdr_accum -> hdr_parse (the fixed packet header)
 //                          -> payload_window (strip the header)
 //                          -> msg_stitch (carry partial messages across beats)
-//                          -> msg_framer (SLOTS x msg_rotate, boundary chain)
-//                          -> field_extract x SLOTS (static slices)
+//                          -> msg_framer (SLOTS x msg_rotate, boundary chain,
+//                                         plus one narrow tail classifier)
+//                          -> field_extract x SLOTS+1 (static slices)
 //
 // s_axis_tready is tied high; nothing here can stall.
 
@@ -30,6 +31,7 @@ module parser_top_simple_feed #(
   parameter int KEEP_W = DATA_W / 8,
   parameter int BCNT_W = $clog2(DATA_W / 8 + 1),
   parameter int SLOTS  = (DATA_W / 8 + 14 - 1) / 14,
+  parameter int CHK    = SLOTS + 1,
   parameter int REC_W  = simple_feed_pkg::SIMPLE_FEED_REC_W
 ) (
   input  wire                clk,
@@ -170,8 +172,9 @@ module parser_top_simple_feed #(
   // ------------------------------------------------------------- framer ----
   logic [SLOTS*MSG_BITS-1:0] slot_win;
   logic [SLOTS*TOT_W-1:0]    slot_total;
-  logic [SLOTS-1:0]          slot_type_ok;
-  logic [SLOTS-1:0]          slot_size_ok;
+  logic [3*8-1:0]           tail_pre;
+  logic [CHK-1:0]            slot_type_ok;
+  logic [CHK-1:0]            slot_size_ok;
   logic                      fr_done;
   logic [2:0]                fr_err;
   logic [15:0]               fr_msgs;
@@ -191,6 +194,7 @@ module parser_top_simple_feed #(
     .i_pkt_start(stitch_start), .i_pkt_last(stitch_last),
     .i_type_ok(slot_type_ok), .i_size_ok(slot_size_ok),
     .o_win(slot_win), .o_total(slot_total),
+    .o_tail_pre(tail_pre),
     .o_slot_valid(fr_slot_valid), .o_consume(consume),
     .o_pkt_done(fr_done), .o_pkt_err(fr_err), .o_pkt_msgs(fr_msgs)
   );
@@ -215,6 +219,18 @@ module parser_top_simple_feed #(
       );
     end
   endgenerate
+
+  // The framer's tail classifier: what is left after the last message this
+  // cycle, judged on its prefix alone. It emits no record, so it needs no
+  // extractor -- just the type decode, which is what tells a fragment with an
+  // unknown type from one that is merely short.
+  msg_check_simple_feed #(
+    .PRE_BITS(3 * 8), .TOT_W(TOT_W)
+  ) u_check_tail (
+    .i_pre    (tail_pre),
+    .o_type_ok(slot_type_ok[SLOTS]),
+    .o_size_ok(slot_size_ok[SLOTS])
+  );
 
   // The message bus is registered so that it sits on the same pipeline stage as
   // o_pkt_done. Left combinational, a packet's first message could be presented
@@ -273,11 +289,24 @@ module parser_top_simple_feed #(
   // Two ways a packet finishes: through the framer, or -- when the header was
   // too short to even locate the payload -- straight off payload_window's
   // strip error. Every packet reports exactly once either way.
-  assign pkt_done_any  = fr_done || pay_strip_err;
+  //
+  // The strip-error path skips the stitch and framer stages, so it arrives a
+  // cycle early. It is delayed here to put both endings on one schedule.
+  // Without the delay, a runt following a full packet with no idle cycle
+  // between them lands its verdict on the same cycle as its predecessor's, and
+  // one of the two is simply lost -- the same shape as B004, one level up.
+  // (docs/bugs-found.md B010)
+  logic strip_err_q;
+  always_ff @(posedge clk) begin
+    if (!rst_n) strip_err_q <= 1'b0;
+    else        strip_err_q <= pay_strip_err;
+  end
+
+  assign pkt_done_any  = fr_done || strip_err_q;
   assign declared_msgs = meta_head[15:0];
 
   always_comb begin
-    if (pay_strip_err) begin
+    if (strip_err_q) begin
       pkt_err_any = 3'(pkg_wirespec::WS_TRUNCATED);
     end else if (fr_err != 3'(pkg_wirespec::WS_OK)) begin
       pkt_err_any = fr_err;
@@ -296,7 +325,7 @@ module parser_top_simple_feed #(
     end else begin
       o_pkt_done <= pkt_done_any;
       o_pkt_err  <= pkt_err_any;
-      o_pkt_msgs <= pay_strip_err ? 16'd0 : fr_msgs;
+      o_pkt_msgs <= strip_err_q ? 16'd0 : fr_msgs;
     end
   end
 
@@ -305,7 +334,7 @@ module parser_top_simple_feed #(
     .clk(clk), .rst_n(rst_n), .clear(1'b0),
     .i_pkt_done (pkt_done_any),
     .i_pkt_bad  (pkt_err_any != 3'(pkg_wirespec::WS_OK)),
-    .i_pkt_msgs (pay_strip_err ? 16'd0 : fr_msgs),
+    .i_pkt_msgs (strip_err_q ? 16'd0 : fr_msgs),
     .i_seq_valid(1'b1),
     .i_seq      (meta_head[META_W-1:16]),
     .o_packets  (o_stat_packets),

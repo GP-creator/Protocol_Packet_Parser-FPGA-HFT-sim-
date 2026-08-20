@@ -206,4 +206,111 @@ slot count fails rather than sitting there costing area.
 
 ---
 
+## B009 — a trailing fragment on the packet's last beat was never classified
+
+**Milestone:** M5 · `rtl/common/msg_framer.sv`
+**Found by:** `tb/integration/test_parser_feed.py::test_malformed_packets`, on the
+`feed_trailer` cases added at M5
+
+The framer retires messages greedily, and the leftover after the last one is
+inspected by slot 0 on the *following* cycle. When the last message is accepted
+on the packet's final beat there is no following cycle, so the leftover fell
+through to a catch-all — "bytes still held when the packet ends" — and the packet
+reported `TRUNCATED` whatever those bytes actually said. The model, walking bytes
+with no notion of cycles, read the fragment's length prefix and said
+`ZERO_LENGTH`.
+
+The mismatch is the small part. What it implies is the problem: whether the last
+accept lands on the final beat depends on the message sizes and on `DATA_W`, so
+**the same packet got different verdicts at different datapath widths**. A
+parser's verdict has to be a function of its bytes.
+
+```
+16 B header + 32 B imbalance + 3 trailing zeros, DATA_W=64
+   payload 35 B -> beats 8,8,8,8,3; the imbalance retires on beat 3 and
+   the fragment is exposed on beat 4, where slot 0 reads it -> ZERO_LENGTH
+
+16 B header + 25 B trade + 3 trailing zeros, DATA_W=64
+   payload 28 B -> beats 8,8,8,4; the trade retires on the *last* beat
+   and the fragment is never looked at                      -> TRUNCATED
+```
+
+**Fix:** the slot chain runs `SLOTS+1` stages. The extra one can never accept —
+the `SLOTS` bound in `msg_framer.sv` proves no `(SLOTS+1)`-th message can
+complete in one cycle — and exists only to classify the leftover. It rotates
+`PREFIX` bytes rather than `MSG_MAX`, and its type and size verdict comes from a
+generated `msg_check_<proto>.sv` rather than a second `field_extract`, so it
+costs a narrow byte select and a type decode rather than another full rotator.
+The accept chain's depth is unchanged.
+
+**Regression:** `test_trailing_fragment_on_the_last_beat` sweeps six leading
+message sizes against seven tail shapes, which walks the fragment across the
+beat grid at every `DATA_W` without the test needing to know which case is
+which. Plus `tests/test_emit.py::test_framed_top_instantiates_the_tail_classifier`
+and `::test_tail_classifier_reads_only_the_prefix`, so the fix cannot be reverted
+or quietly made expensive.
+
+---
+
+## B010 — a runt packet's verdict overwrote its predecessor's
+
+**Milestone:** M5 · `wirespec/templates/parser_top_framed.sv.j2`
+**Found by:** `tb/integration/test_parser_feed.py::test_misplaced_tlast`
+
+A packet finishes one of two ways. Long enough to carry a header, it finishes
+through the framer. Shorter than that, the framer never sees it and
+`payload_window`'s strip error ends it instead — one stage earlier, because it
+skips the stitch and the framer.
+
+Two schedules a cycle apart, and `o_pkt_done` is a single-cycle pulse. With no
+idle between them, a runt following a full packet asserted `o_pkt_done` on the
+same cycle its predecessor did, and **one of the two verdicts disappeared** — a
+packet the parser accepted, counted in `stats.sv`, and never reported.
+
+Exactly the shape of B004, one level up. That is the part worth noticing: the
+same mistake reappeared at a different level of the design, three milestones
+later, in a module written after the first one was fixed.
+
+**Fix:** register `pay_strip_err` so both endings land on the same cycle.
+
+**Regression:** `test_runts_between_full_packets_no_idle` — runts of 1, 2, 7, 8,
+9 and 15 bytes, each sandwiched between full packets with zero idle. Plus
+`tests/test_emit.py::test_framed_top_registers_the_strip_error`, which also fails
+if anything reads the undelayed signal again. The latency check now asserts that
+the two verdict populations share a schedule, which is the general form of the
+bug rather than this instance of it.
+
+---
+
+## B011 — skip mode entered on the last beat never expired
+
+**Milestone:** M5 · `rtl/common/msg_framer.sv`
+**Found by:** `tb/integration/test_parser_feed.py::test_trailing_fragment_on_the_last_beat`
+— a test written for B009, which found this on its first run
+
+A message declaring more bytes than the stitch buffer can hold is counted past
+rather than stored (B007). `skip_q` carries that state, and `skip_expired`
+checked `skip_q && i_pkt_last`.
+
+But `skip_q` is set at the *end* of the cycle skip begins. A skip beginning on
+the packet's final beat therefore saw `skip_q` still low, `skip_expired` false,
+and raised no fault at all — **the packet finished clean**. A three-byte tail of
+`ff ff ff` declares 65,537 bytes, and the parser reported `WS_OK`.
+
+Worse than B009: that one gave the wrong defect code, this one reported no
+defect. It is also the fourth instance of one pattern — B002, B003 and B009 are
+the others — a value read one cycle before the register holding it is updated.
+That is the mistake this design keeps making, and it is worth stating plainly
+rather than filing three separate lessons.
+
+**Fix:** `skip_expired` also fires when skip is *beginning* on the final beat. It
+could never resolve there anyway: "huge" means the declared total exceeds the
+whole buffer, and on the last beat the buffer is all there is left.
+
+**Regression:** the `ff ff ff` and `00 0c` tails in
+`test_trailing_fragment_on_the_last_beat`, and `feed_huge_length` in the
+malformed corpus.
+
+---
+
 *(further entries appended as found)*

@@ -9,4 +9,5 @@ rtl/common/msg_framer.sv
 rtl/common/stats.sv
 rtl/generated/hdr_parse_simple_feed.sv
 rtl/generated/field_extract_simple_feed.sv
+rtl/generated/msg_check_simple_feed.sv
 rtl/generated/parser_top_simple_feed.sv

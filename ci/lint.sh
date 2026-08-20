@@ -40,6 +40,8 @@ if [ -f rtl/generated/parser_top_simple_feed.sv ]; then
 fi
 
 rc=0
+invocations=0
+warnings=0
 for entry in "${TARGETS[@]}"; do
   top="${entry%%:*}"
   src="${entry#*:}"
@@ -60,7 +62,11 @@ for entry in "${TARGETS[@]}"; do
       # shellcheck disable=SC2086
       out=$(verilator --lint-only -Wall -sv --top-module "$top" "${gparam[@]}" $src 2>&1)
     fi
-    if [ $? -ne 0 ]; then
+    status=$?
+    invocations=$((invocations + 1))
+    n=$(printf '%s' "$out" | grep -c '^%Warning' || true)
+    warnings=$((warnings + n))
+    if [ $status -ne 0 ]; then
       printf 'FAIL\n%s\n' "$out"
       rc=1
     else
@@ -69,7 +75,23 @@ for entry in "${TARGETS[@]}"; do
   done
 done
 
+# Recorded whether or not the gate passed: "how many warnings" is the number
+# worth having, and a run that fails is exactly when it is worth having.
+python3 - "$invocations" "$warnings" "${#TARGETS[@]}" "$WIDTHS" <<'PY' || true
+import sys
+sys.path.insert(0, ".")
+from tb.common import metrics as met
+met.write("lint", {
+    "invocations": int(sys.argv[1]),
+    "warnings": int(sys.argv[2]),
+    "targets": int(sys.argv[3]),
+    "widths": [int(w) for w in sys.argv[4].split()],
+    "tool": "verilator --lint-only -Wall",
+})
+PY
+
 if [ "$rc" -eq 0 ]; then
-  printf '\nlint clean: %s target(s) x {%s}\n' "${#TARGETS[@]}" "$WIDTHS"
+  printf '\nlint clean: %s target(s) x {%s}, %s invocation(s), %s warning(s)\n' \
+    "${#TARGETS[@]}" "$WIDTHS" "$invocations" "$warnings"
 fi
 exit $rc

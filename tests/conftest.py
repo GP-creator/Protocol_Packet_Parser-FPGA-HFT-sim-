@@ -30,3 +30,25 @@ def eth_ir(eth_schema: Schema) -> IR:
 @pytest.fixture(scope="session")
 def feed_ir(feed_schema: Schema) -> IR:
     return build_ir(feed_schema)
+
+
+def pytest_sessionfinish(session, exitstatus):
+    """Drop this run's counts where ci/collect_metrics.py will find them.
+
+    Reported from the hook rather than scraped out of pytest's terminal summary,
+    so a change to its output format cannot quietly turn the number into zero.
+    """
+    from tb.common import metrics as met
+
+    reporter = session.config.pluginmanager.get_plugin("terminalreporter")
+    stats = getattr(reporter, "stats", {}) if reporter else {}
+    met.write(
+        "pytest",
+        {
+            "collected": session.testscollected,
+            "passed": len(stats.get("passed", [])),
+            "failed": len(stats.get("failed", [])) + len(stats.get("error", [])),
+            "skipped": len(stats.get("skipped", [])),
+            "exit_status": int(exitstatus),
+        },
+    )

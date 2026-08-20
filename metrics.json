@@ -1,0 +1,593 @@
+{
+  "generated_at": "2026-08-20T22:29:48+00:00",
+  "git": {
+    "commit": "20049f3",
+    "tag": "m4",
+    "dirty": true
+  },
+  "complete": true,
+  "stages_missing": [],
+  "defects": {
+    "total": 11,
+    "highest": "B011",
+    "by_milestone": {
+      "M1": 1,
+      "M2": 4,
+      "M4": 3,
+      "M5": 3
+    },
+    "by_module": {
+      "`rtl/common/payload_window.sv`": 3,
+      "`rtl/common/msg_framer.sv`": 3,
+      "`wirespec/templates/parser_top_framed.sv.j2`": 2,
+      "(schema/tooling)": 1,
+      "`rtl/handwritten/hdr_parse_eth_ipv4_udp.sv`": 1,
+      "`rtl/common/msg_framer.sv`,": 1
+    },
+    "entries": [
+      {
+        "id": "B001",
+        "title": "invalid-schema fixture declared both `bits` and `bytes`",
+        "milestone": "M1",
+        "where": null
+      },
+      {
+        "id": "B002",
+        "title": "a single-beat packet inherited the previous packet's byte offset",
+        "milestone": "M2",
+        "where": "`rtl/common/payload_window.sv`"
+      },
+      {
+        "id": "B003",
+        "title": "a single-beat packet was stripped by the previous packet's header length",
+        "milestone": "M2",
+        "where": "`rtl/common/payload_window.sv`"
+      },
+      {
+        "id": "B004",
+        "title": "two packets' terminal events collided, reordering their payloads",
+        "milestone": "M2",
+        "where": "`rtl/common/payload_window.sv`"
+      },
+      {
+        "id": "B005",
+        "title": "a packet with an illegal IPv4 IHL still emitted payload bytes",
+        "milestone": "M2",
+        "where": "`rtl/handwritten/hdr_parse_eth_ipv4_udp.sv`"
+      },
+      {
+        "id": "B006",
+        "title": "the message bus and the packet verdict were on different pipeline stages",
+        "milestone": "M4",
+        "where": "`wirespec/templates/parser_top_framed.sv.j2`"
+      },
+      {
+        "id": "B007",
+        "title": "skip mode never subtracted the bytes it retired on entry",
+        "milestone": "M4",
+        "where": "`rtl/common/msg_framer.sv`"
+      },
+      {
+        "id": "B008",
+        "title": "SLOTS was sized by buffer capacity, not by what can actually complete",
+        "milestone": "M4",
+        "where": "`rtl/common/msg_framer.sv`,"
+      },
+      {
+        "id": "B009",
+        "title": "a trailing fragment on the packet's last beat was never classified",
+        "milestone": "M5",
+        "where": "`rtl/common/msg_framer.sv`"
+      },
+      {
+        "id": "B010",
+        "title": "a runt packet's verdict overwrote its predecessor's",
+        "milestone": "M5",
+        "where": "`wirespec/templates/parser_top_framed.sv.j2`"
+      },
+      {
+        "id": "B011",
+        "title": "skip mode entered on the last beat never expired",
+        "milestone": "M5",
+        "where": "`rtl/common/msg_framer.sv`"
+      }
+    ]
+  },
+  "size": {
+    "schema_lines": 163,
+    "generated_rtl_lines": 1442,
+    "generated_rtl_ratio": 8.8,
+    "per_protocol": {
+      "eth_ipv4_udp": {
+        "schema_lines": 71,
+        "generated_lines": 610,
+        "generated_files": 3,
+        "ratio": 8.6
+      },
+      "simple_feed": {
+        "schema_lines": 92,
+        "generated_lines": 832,
+        "generated_files": 5,
+        "ratio": 9.0
+      }
+    },
+    "handwritten_rtl_lines": 1689,
+    "template_lines": 963,
+    "generator_lines": 2301,
+    "testbench_lines": 6009,
+    "modules": {
+      "handwritten_common": [
+        "axis_reg_slice",
+        "hdr_accum",
+        "msg_framer",
+        "msg_rotate",
+        "msg_stitch",
+        "payload_window",
+        "pkt_align",
+        "stats"
+      ],
+      "handwritten_common_count": 8,
+      "handwritten_m2_prototype": [
+        "hdr_parse_eth_ipv4_udp",
+        "parser_top_eth_ipv4_udp"
+      ],
+      "generated": [
+        "field_extract_simple_feed",
+        "hdr_parse_eth_ipv4_udp",
+        "hdr_parse_simple_feed",
+        "msg_check_simple_feed",
+        "parser_top_eth_ipv4_udp",
+        "parser_top_simple_feed"
+      ],
+      "generated_count": 6
+    },
+    "files": {
+      "schemas/eth_ipv4_udp.yaml": 71,
+      "schemas/simple_feed.yaml": 92,
+      "rtl/common/axis_reg_slice.sv": 84,
+      "rtl/common/hdr_accum.sv": 93,
+      "rtl/common/msg_framer.sv": 407,
+      "rtl/common/msg_rotate.sv": 42,
+      "rtl/common/msg_stitch.sv": 100,
+      "rtl/common/payload_window.sv": 234,
+      "rtl/common/pkg_wirespec.sv": 66,
+      "rtl/common/pkt_align.sv": 103,
+      "rtl/common/stats.sv": 73,
+      "rtl/generated/eth_ipv4_udp_pkg.sv": 96,
+      "rtl/generated/field_extract_simple_feed.sv": 128,
+      "rtl/generated/hdr_parse_eth_ipv4_udp.sv": 285,
+      "rtl/generated/hdr_parse_simple_feed.sv": 143,
+      "rtl/generated/msg_check_simple_feed.sv": 70,
+      "rtl/generated/parser_top_eth_ipv4_udp.sv": 229,
+      "rtl/generated/parser_top_simple_feed.sv": 364,
+      "rtl/generated/simple_feed_pkg.sv": 127,
+      "wirespec/templates/field_extract.sv.j2": 83,
+      "wirespec/templates/hdr_parse_layered.sv.j2": 192,
+      "wirespec/templates/msg_check.sv.j2": 60,
+      "wirespec/templates/parser_top_framed.sv.j2": 362,
+      "wirespec/templates/parser_top_layered.sv.j2": 186,
+      "wirespec/templates/proto_pkg.sv.j2": 80
+    }
+  },
+  "measured": {
+    "pytest": {
+      "collected": 275,
+      "passed": 275,
+      "failed": 0,
+      "skipped": 0,
+      "exit_status": 0
+    },
+    "cocotb": {
+      "suite_runs": 16,
+      "tests": 124,
+      "failed": 0,
+      "suites": 8,
+      "widths": [
+        64,
+        128
+      ],
+      "filtered": false,
+      "by_suite": [
+        {
+          "suite": "axis_reg_slice",
+          "data_w": 64,
+          "tests": 6,
+          "failed": 0
+        },
+        {
+          "suite": "axis_reg_slice",
+          "data_w": 128,
+          "tests": 6,
+          "failed": 0
+        },
+        {
+          "suite": "pkt_align",
+          "data_w": 64,
+          "tests": 8,
+          "failed": 0
+        },
+        {
+          "suite": "pkt_align",
+          "data_w": 128,
+          "tests": 8,
+          "failed": 0
+        },
+        {
+          "suite": "payload_window",
+          "data_w": 64,
+          "tests": 8,
+          "failed": 0
+        },
+        {
+          "suite": "payload_window",
+          "data_w": 128,
+          "tests": 8,
+          "failed": 0
+        },
+        {
+          "suite": "msg_rotate",
+          "data_w": 64,
+          "tests": 4,
+          "failed": 0
+        },
+        {
+          "suite": "msg_rotate",
+          "data_w": 128,
+          "tests": 4,
+          "failed": 0
+        },
+        {
+          "suite": "msg_stitch",
+          "data_w": 64,
+          "tests": 7,
+          "failed": 0
+        },
+        {
+          "suite": "msg_stitch",
+          "data_w": 128,
+          "tests": 7,
+          "failed": 0
+        },
+        {
+          "suite": "parser_eth_hand",
+          "data_w": 64,
+          "tests": 7,
+          "failed": 0
+        },
+        {
+          "suite": "parser_eth_hand",
+          "data_w": 128,
+          "tests": 7,
+          "failed": 0
+        },
+        {
+          "suite": "parser_eth_gen",
+          "data_w": 64,
+          "tests": 7,
+          "failed": 0
+        },
+        {
+          "suite": "parser_eth_gen",
+          "data_w": 128,
+          "tests": 7,
+          "failed": 0
+        },
+        {
+          "suite": "parser_feed",
+          "data_w": 64,
+          "tests": 15,
+          "failed": 0
+        },
+        {
+          "suite": "parser_feed",
+          "data_w": 128,
+          "tests": 15,
+          "failed": 0
+        }
+      ]
+    },
+    "lint": {
+      "invocations": 40,
+      "warnings": 0,
+      "targets": 10,
+      "widths": [
+        64,
+        128,
+        256,
+        512
+      ],
+      "tool": "verilator --lint-only -Wall"
+    },
+    "parsers": {
+      "parser_eth_w128": {
+        "data_w": 128,
+        "packets": 10734,
+        "bytes": 1270214,
+        "field_comparisons": 201322,
+        "payload_beats": 50275,
+        "payload_tail_beats": 4067,
+        "mismatches": 0,
+        "latency": {
+          "record": 2,
+          "payload": 2,
+          "payload_tail": 3
+        }
+      },
+      "parser_eth_w64": {
+        "data_w": 64,
+        "packets": 10734,
+        "bytes": 1270214,
+        "field_comparisons": 201322,
+        "payload_beats": 95664,
+        "payload_tail_beats": 4346,
+        "mismatches": 0,
+        "latency": {
+          "record": 2,
+          "payload": 2,
+          "payload_tail": 3
+        }
+      },
+      "parser_feed_w128": {
+        "data_w": 128,
+        "slots": 2,
+        "packets": 12006,
+        "bytes": 1179915,
+        "messages": 42119,
+        "field_comparisons": 273411,
+        "mismatches": 0,
+        "latency": {
+          "header": {
+            "2": 11997
+          },
+          "message": {
+            "3": 42119
+          },
+          "verdict": {
+            "5": 11997
+          },
+          "verdict_runt": {
+            "5": 9
+          }
+        },
+        "coverage": {
+          "packets": 12006,
+          "messages": 42119,
+          "declared": 175,
+          "hit": 175,
+          "closed": true,
+          "crosses": {
+            "type_x_lane": {
+              "axes": [
+                "message type",
+                "start byte lane"
+              ],
+              "note": "every message type begins at every byte lane of a beat",
+              "declared": 64,
+              "hit": 64,
+              "closed": true,
+              "holes": []
+            },
+            "type_x_beats": {
+              "axes": [
+                "message type",
+                "beats spanned"
+              ],
+              "note": "how many ingress beats one message is split across; only spans arithmetic allows are declared",
+              "declared": 8,
+              "hit": 8,
+              "closed": true,
+              "holes": []
+            },
+            "type_x_slot": {
+              "axes": [
+                "message type",
+                "framer slot"
+              ],
+              "note": "each type extracted through each parallel rotator, for the slots that type can actually reach",
+              "declared": 5,
+              "hit": 5,
+              "closed": true,
+              "holes": []
+            },
+            "defect_x_locus": {
+              "axes": [
+                "defect",
+                "where in the packet"
+              ],
+              "note": "each malformed class, both as a packet's first message and after a good one -- a parser can get the first right and leak state",
+              "declared": 10,
+              "hit": 10,
+              "closed": true,
+              "holes": []
+            },
+            "msgs_x_alignment": {
+              "axes": [
+                "message count",
+                "packet length vs beat width"
+              ],
+              "note": "message-count bucket against whether the packet ends mid-beat",
+              "declared": 10,
+              "hit": 10,
+              "closed": true,
+              "holes": []
+            },
+            "field_value_class": {
+              "axes": [
+                "record.field",
+                "value class"
+              ],
+              "note": "every settable field of every record at each end of its range; bins come from the field's own width and signedness",
+              "declared": 72,
+              "hit": 72,
+              "closed": true,
+              "holes": []
+            },
+            "ingress_shape": {
+              "axes": [
+                "tvalid gap before beat",
+                "beat position in packet"
+              ],
+              "note": "a stalled source at each position, including the first and last beat of a packet",
+              "declared": 6,
+              "hit": 6,
+              "closed": true,
+              "holes": []
+            }
+          }
+        }
+      },
+      "parser_feed_w64": {
+        "data_w": 64,
+        "slots": 1,
+        "packets": 11990,
+        "bytes": 1174255,
+        "messages": 41855,
+        "field_comparisons": 271795,
+        "mismatches": 0,
+        "latency": {
+          "header": {
+            "2": 11981
+          },
+          "message": {
+            "3": 41855
+          },
+          "verdict": {
+            "5": 11981
+          },
+          "verdict_runt": {
+            "5": 9
+          }
+        },
+        "coverage": {
+          "packets": 11990,
+          "messages": 41855,
+          "declared": 141,
+          "hit": 141,
+          "closed": true,
+          "crosses": {
+            "type_x_lane": {
+              "axes": [
+                "message type",
+                "start byte lane"
+              ],
+              "note": "every message type begins at every byte lane of a beat",
+              "declared": 32,
+              "hit": 32,
+              "closed": true,
+              "holes": []
+            },
+            "type_x_beats": {
+              "axes": [
+                "message type",
+                "beats spanned"
+              ],
+              "note": "how many ingress beats one message is split across; only spans arithmetic allows are declared",
+              "declared": 7,
+              "hit": 7,
+              "closed": true,
+              "holes": []
+            },
+            "type_x_slot": {
+              "axes": [
+                "message type",
+                "framer slot"
+              ],
+              "note": "each type extracted through each parallel rotator, for the slots that type can actually reach",
+              "declared": 4,
+              "hit": 4,
+              "closed": true,
+              "holes": []
+            },
+            "defect_x_locus": {
+              "axes": [
+                "defect",
+                "where in the packet"
+              ],
+              "note": "each malformed class, both as a packet's first message and after a good one -- a parser can get the first right and leak state",
+              "declared": 10,
+              "hit": 10,
+              "closed": true,
+              "holes": []
+            },
+            "msgs_x_alignment": {
+              "axes": [
+                "message count",
+                "packet length vs beat width"
+              ],
+              "note": "message-count bucket against whether the packet ends mid-beat",
+              "declared": 10,
+              "hit": 10,
+              "closed": true,
+              "holes": []
+            },
+            "field_value_class": {
+              "axes": [
+                "record.field",
+                "value class"
+              ],
+              "note": "every settable field of every record at each end of its range; bins come from the field's own width and signedness",
+              "declared": 72,
+              "hit": 72,
+              "closed": true,
+              "holes": []
+            },
+            "ingress_shape": {
+              "axes": [
+                "tvalid gap before beat",
+                "beat position in packet"
+              ],
+              "note": "a stalled source at each position, including the first and last beat of a packet",
+              "declared": 6,
+              "hit": 6,
+              "closed": true,
+              "holes": []
+            }
+          }
+        }
+      }
+    },
+    "totals_by_config": {
+      "parser_eth_w128": {
+        "bytes": 1270214,
+        "packets": 10734,
+        "messages": null,
+        "field_comparisons": 201322,
+        "mismatches": 0
+      },
+      "parser_eth_w64": {
+        "bytes": 1270214,
+        "packets": 10734,
+        "messages": null,
+        "field_comparisons": 201322,
+        "mismatches": 0
+      },
+      "parser_feed_w128": {
+        "bytes": 1179915,
+        "packets": 12006,
+        "messages": 42119,
+        "field_comparisons": 273411,
+        "mismatches": 0
+      },
+      "parser_feed_w64": {
+        "bytes": 1174255,
+        "packets": 11990,
+        "messages": 41855,
+        "field_comparisons": 271795,
+        "mismatches": 0
+      }
+    },
+    "malformed": {
+      "eth_ipv4_udp": {
+        "cases": 31,
+        "same_at_every_width": false,
+        "by_config": {
+          "malformed_eth_w128": 14,
+          "malformed_eth_w64": 14,
+          "malformed_w128": 31,
+          "malformed_w64": 31
+        }
+      },
+      "total_cases": 31
+    }
+  }
+}

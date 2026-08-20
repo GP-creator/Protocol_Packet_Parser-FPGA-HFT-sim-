@@ -1,0 +1,60 @@
+{{ banner }}
+// Type and size verdict from a message's prefix alone.
+//
+// `field_extract` answers the same two questions, but it needs the whole
+// message window to do it. The framer's tail classifier has no whole message --
+// it is looking at whatever is left after the last one, which may be a fragment
+// of three bytes -- and it never emits a record, so extraction would be waste.
+//
+// It exists because a trailing fragment still has to be *classified*: "the type
+// code is not one we know" and "there are not enough bytes" are different
+// verdicts, and the golden model distinguishes them. Without it the framer
+// could only ever say TRUNCATED, and a packet's verdict would depend on where
+// its beat boundaries happened to fall (B009).
+//
+// The declared total is recomputed here rather than passed in, so the module
+// depends on nothing but the {{ L.prefix_bytes }} prefix bytes. That is one small adder
+// duplicated; the alternative is an input port that is right by convention.
+//
+// Combinational, and small: one decode of the {{ L.type_field.width }}-bit type field plus
+// {{ L.messages|length }} constant comparisons.
+
+`timescale 1ns / 1ps
+`default_nettype none
+
+module msg_check_{{ L.name }} #(
+  parameter int PRE_BITS = {{ L.prefix_bytes }} * 8,
+  parameter int TOT_W    = {{ L.tot_w }}
+) (
+  input  wire [PRE_BITS-1:0] i_pre,   // byte 0 = start of the message
+
+  output wire                o_type_ok,
+  output wire                o_size_ok
+);
+
+  // Total bytes the prefix declares: {{ L.len_bytes }} big-endian length byte(s) at offset
+  // {{ L.len_off }}, plus {{ L.len_add }} for what the length does not cover.
+  logic [TOT_W-1:0] total;
+  always_comb begin
+    total = TOT_W'({{ L.len_add }});
+{% for b in range(L.len_bytes) %}
+    total = total + (TOT_W'(i_pre[{{ (L.len_off + b) * 8 }} +: 8]) << {{ 8 * (L.len_bytes - 1 - b) }});
+{% endfor %}
+  end
+
+  wire [{{ L.type_field.width - 1 }}:0] mtype;
+  assign mtype = {{ slice_expr('i_pre', L.type_field.segments) }};
+
+{% for m in L.messages %}
+  wire is_{{ pad(m.name, 12) }} = (mtype == {{ sv_int(m.code, L.type_field.width) }});
+{% endfor %}
+
+  assign o_type_ok = {% for m in L.messages %}is_{{ m.name }}{{ " || " if not loop.last else ";" }}{% endfor %}
+
+
+  assign o_size_ok = {% for m in L.messages %}(is_{{ m.name }} && (total == TOT_W'({{ m.bytes_ }}))){{ " ||\n                     " if not loop.last else ";" }}{% endfor %}
+
+
+endmodule
+
+`default_nettype wire

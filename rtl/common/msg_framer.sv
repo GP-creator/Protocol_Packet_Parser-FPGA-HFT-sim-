@@ -28,6 +28,14 @@
 // reading its predecessor by hierarchical name. Carrying it in packed vectors
 // instead reads to verilator as a vector depending on itself, and it reports a
 // circular combinational path that is not there.
+//
+// There are SLOTS+1 stages, not SLOTS. The extra one can never accept -- the
+// bound above says so -- and exists only to classify what is left over after
+// the last message this cycle. Without it, a trailing fragment exposed on the
+// packet's final beat is never looked at, and the packet's verdict depends on
+// where the beat boundaries happened to fall rather than on its bytes (B009).
+// It rotates PREFIX bytes rather than MSG_MAX, because a fragment is only ever
+// classified by its length and type, never extracted.
 
 `timescale 1ns / 1ps
 `default_nettype none
@@ -48,6 +56,7 @@ module msg_framer #(
   parameter int OFF_W      = $clog2(BUF_BYTES + 1),
   parameter int MSG_BITS   = MSG_MAX * 8,
   parameter int SLOTS      = (KEEP_W + MSG_MIN - 1) / MSG_MIN,
+  parameter int CHK        = SLOTS + 1,   // slots plus the tail classifier
   parameter int TOT_W      = LEN_BYTES * 8 + 2
 ) (
   input  wire                      clk,
@@ -58,11 +67,14 @@ module msg_framer #(
   input  wire                      i_pkt_start,
   input  wire                      i_pkt_last,
 
-  input  wire [SLOTS-1:0]          i_type_ok,
-  input  wire [SLOTS-1:0]          i_size_ok,
+  // Bit SLOTS is the tail classifier's verdict, answered from o_tail_pre and
+  // o_tail_total rather than from a full message window.
+  input  wire [CHK-1:0]            i_type_ok,
+  input  wire [CHK-1:0]            i_size_ok,
 
   output wire [SLOTS*MSG_BITS-1:0] o_win,
   output wire [SLOTS*TOT_W-1:0]    o_total,
+  output wire [PREFIX*8-1:0]       o_tail_pre,
   output wire [SLOTS-1:0]          o_slot_valid,
   output wire [OFF_W-1:0]          o_consume,
 
@@ -93,9 +105,9 @@ module msg_framer #(
   // ------------------------------------------------------------ slot chain --
   genvar g;
   generate
-    for (g = 0; g < SLOTS; g++) begin : g_slot
+    for (g = 0; g < CHK; g++) begin : g_slot
       wire [OFF_W-1:0]    off_w;
-      wire [MSG_BITS-1:0] win_w;
+      wire [PREFIX*8-1:0] pre_w;    // length + type bytes, every slot has these
       wire [TOT_W-1:0]    lenv_w;
       wire [TOT_W-1:0]    total_w;
       wire [OFF_W-1:0]    avail_w;
@@ -119,21 +131,38 @@ module msg_framer #(
         assign prev_ok = g_slot[g-1].accept_w;
       end
 
-      msg_rotate #(
-        .IN_BYTES (BUF_BYTES),
-        .OUT_BYTES(MSG_MAX)
-      ) u_rot (
-        .i_win(i_win),
-        .i_off(off_w),
-        .o_win(win_w)
-      );
+      // The tail classifier only ever reads a length and a type, so it rotates
+      // PREFIX bytes instead of MSG_MAX. That keeps the stage this adds to the
+      // fault path a narrow byte select rather than a second full rotator.
+      if (g == SLOTS) begin : g_tail_rot
+        msg_rotate #(
+          .IN_BYTES (BUF_BYTES),
+          .OUT_BYTES(PREFIX)
+        ) u_rot (
+          .i_win(i_win),
+          .i_off(off_w),
+          .o_win(pre_w)
+        );
+      end else begin : g_full_rot
+        wire [MSG_BITS-1:0] full_w;
+        msg_rotate #(
+          .IN_BYTES (BUF_BYTES),
+          .OUT_BYTES(MSG_MAX)
+        ) u_rot (
+          .i_win(i_win),
+          .i_off(off_w),
+          .o_win(full_w)
+        );
+        assign pre_w = full_w[PREFIX*8-1:0];
+      end
 
-      // Big-endian length prefix, read straight off the rotated window.
+      // Big-endian length prefix, read straight off the rotated window. Only
+      // the prefix is needed, so this is the one read the tail stage shares.
       logic [TOT_W-1:0] lenv_acc;
       always_comb begin
         lenv_acc = TOT_W'(0);
         for (int b = 0; b < LEN_BYTES; b++) begin
-          lenv_acc = (lenv_acc << 8) | TOT_W'(win_w[(LEN_OFF + b)*8 +: 8]);
+          lenv_acc = (lenv_acc << 8) | TOT_W'(pre_w[(LEN_OFF + b)*8 +: 8]);
         end
       end
       assign lenv_w = lenv_acc;
@@ -155,7 +184,14 @@ module msg_framer #(
       assign whole_w     = has_len_w && !zero_len_w && !short_tot_w &&
                            !huge_tot_w && (TOT_W'(avail_w) >= total_w);
 
-      assign accept_w = prev_ok && whole_w && i_type_ok[g] && i_size_ok[g];
+      // The tail classifier never emits a record. By the SLOTS bound its
+      // whole_w cannot be true anyway when every earlier slot accepted, so
+      // this is belt and braces rather than a behavioural difference.
+      if (g == SLOTS) begin : g_tail_acc
+        assign accept_w = 1'b0;
+      end else begin : g_real_acc
+        assign accept_w = prev_ok && whole_w && i_type_ok[g] && i_size_ok[g];
+      end
 
       // The message is here and does not decode, or it is malformed on its
       // face, or the packet ended without it: the packet is over either way.
@@ -188,16 +224,16 @@ module msg_framer #(
 
   // ---------------------------------------------------------------- pack ---
   // Read-only views of the chain. Nothing here feeds back into it.
-  logic [SLOTS-1:0] accept_v;
-  logic [SLOTS-1:0] fault_v;
-  logic [SLOTS-1:0] skip_v;
-  logic [OFF_W-1:0] offnext_v [SLOTS];
-  logic [OFF_W-1:0] avail_v   [SLOTS];
-  logic [TOT_W-1:0] total_v   [SLOTS];
-  logic [2:0]       err_v     [SLOTS];
+  logic [CHK-1:0]   accept_v;
+  logic [CHK-1:0]   fault_v;
+  logic [CHK-1:0]   skip_v;
+  logic [OFF_W-1:0] offnext_v [CHK];
+  logic [OFF_W-1:0] avail_v   [CHK];
+  logic [TOT_W-1:0] total_v   [CHK];
+  logic [2:0]       err_v     [CHK];
 
   generate
-    for (g = 0; g < SLOTS; g++) begin : g_pack
+    for (g = 0; g < CHK; g++) begin : g_pack
       assign accept_v[g]  = g_slot[g].accept_w;
       assign fault_v[g]   = g_slot[g].fault_w;
       assign skip_v[g]    = g_slot[g].skip_w;
@@ -206,12 +242,16 @@ module msg_framer #(
       assign total_v[g]   = g_slot[g].total_w;
       assign err_v[g]     = g_slot[g].err_w;
 
-      assign o_win[g*MSG_BITS +: MSG_BITS] = g_slot[g].win_w;
-      assign o_total[g*TOT_W +: TOT_W]     = g_slot[g].total_w;
+      if (g < SLOTS) begin : g_rec
+        assign o_win[g*MSG_BITS +: MSG_BITS] = g_slot[g].g_full_rot.full_w;
+        assign o_total[g*TOT_W +: TOT_W]     = g_slot[g].total_w;
+      end
     end
   endgenerate
 
-  assign o_slot_valid = accept_v;
+  assign o_tail_pre = g_slot[SLOTS].pre_w;
+
+  assign o_slot_valid = accept_v[SLOTS-1:0];
 
   logic             enter_skip;
   logic [TOT_W-1:0] skip_total;
@@ -223,7 +263,7 @@ module msg_framer #(
     skip_total   = TOT_W'(0);
     skip_seen    = TOT_W'(0);
     skip_type_ok = 1'b0;
-    for (int j = SLOTS - 1; j >= 0; j--) begin
+    for (int j = CHK - 1; j >= 0; j--) begin
       if (skip_v[j]) begin
         skip_total   = total_v[j];
         // The whole buffer is retired on the cycle skip begins, so the bytes of
@@ -280,7 +320,7 @@ module msg_framer #(
     end
 
     // The first fault of the packet wins; later slots are already gated off.
-    for (int j = SLOTS - 1; j >= 0; j--) begin
+    for (int j = CHK - 1; j >= 0; j--) begin
       if (fault_v[j]) begin
         bad = 1'b1;
         err = err_v[j];
@@ -288,7 +328,13 @@ module msg_framer #(
     end
 
     skip_resolved = skip_q && (TOT_W'(skip_now) >= skip_left_q);
-    skip_expired  = skip_q && i_pkt_last && !skip_resolved;
+    // Skip mode normally spans several cycles, so `skip_q` carries it. A skip
+    // that *begins* on the packet's final beat has no next cycle to expire in,
+    // and read on its own would let the packet finish clean. It cannot ever
+    // resolve: "huge" means the declared total exceeds the whole buffer, and
+    // the buffer is all there is left. (docs/bugs-found.md B011)
+    skip_expired  = i_pkt_last &&
+                    ((skip_q && !skip_resolved) || (enter_skip && !bad));
 
     if (skip_resolved) begin
       bad = 1'b1;
