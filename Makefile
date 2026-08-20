@@ -13,12 +13,13 @@ GEN_DIR    := rtl/generated
 DATA_W     ?= 64
 PROTOS     := eth_ipv4_udp simple_feed
 
-.PHONY: all gen lint sim test check clean help
+.PHONY: all gen lint sim waves test check clean help
 
 help:
 	@echo "make gen    [DATA_W=64]  generate RTL from the schemas"
-	@echo "make lint                verilator --lint-only -Wall over all RTL"
-	@echo "make sim                 run the cocotb testbenches"
+	@echo "make lint                verilator --lint-only -Wall over all RTL, all widths"
+	@echo "make sim   [SIM_ARGS=..] run the cocotb testbenches"
+	@echo "make waves [SIM_ARGS=..] same, dumping FST traces"
 	@echo "make test                run the pytest suite for the generator"
 	@echo "make check               lint + test + sim  (same gate as ci/check.sh)"
 	@echo "make clean               remove generated and simulation artifacts"
@@ -32,10 +33,13 @@ gen:
 	@echo "gen: not implemented until M3" >&2; exit 1
 
 lint:
-	@echo "lint: no RTL until M2" >&2; exit 1
+	@./ci/lint.sh
 
 sim:
-	@echo "sim: no testbenches until M2" >&2; exit 1
+	$(PYTHON) tb/run_sim.py $(SIM_ARGS)
+
+waves:
+	$(PYTHON) tb/run_sim.py --waves $(SIM_ARGS)
 
 check: ci/check.sh
 	@./ci/check.sh

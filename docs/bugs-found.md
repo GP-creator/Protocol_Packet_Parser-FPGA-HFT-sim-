@@ -29,4 +29,102 @@ message its own header declares.
 
 ---
 
+## B002 — a single-beat packet inherited the previous packet's byte offset
+
+**Milestone:** M2 · `rtl/common/payload_window.sv`
+**Found by:** `tb/unit/test_payload_window.py::test_every_strip_alignment`
+
+`emitted_q` (payload bytes shipped so far) is cleared on a packet's first beat.
+Being a register, it still holds the *previous* packet's value during that beat.
+Any output produced from the first beat therefore read the stale count — so a
+packet whose first beat is also its last came out with the wrong `o_offset` and
+`o_sof` low. An 8-byte packet following a 100-byte one was emitted at offset 96.
+
+Only single-beat packets were affected, because a multi-beat packet produces no
+output from its first beat, and by its second beat the register is correct.
+
+**Fix:** the combinational path takes the SOF case explicitly —
+`emitted_eff = sof_now ? 0 : emitted_q` — rather than relying on the register
+update that happens on the same edge.
+
+**Regression:** `test_single_beat_packet_after_a_long_one`, which sends the short
+packet *after* a long one on purpose. An isolated single-beat test passes either
+way, which is why the sweep found this and a spot check would not have.
+
+---
+
+## B003 — a single-beat packet was stripped by the previous packet's header length
+
+**Milestone:** M2 · `rtl/common/payload_window.sv`
+**Found by:** the same sweep, same run
+
+The same shape as B002 with a worse consequence. `strip_lat` / `strip_q` latch
+the header length on the first beat that carries it. On a packet's SOF beat
+`strip_lat` is still set from the previous packet, so
+`strip_eff = strip_lat ? strip_q : i_strip_bytes` chose the *old* packet's strip.
+An 8-byte packet with `strip=3` emitted all 8 bytes unstripped, having been
+measured against the previous packet's `strip=0`.
+
+**Fix:** `strip_eff = (sof_now || !strip_lat) ? i_strip_bytes : strip_q`, and
+`strip_ok` likewise ignores `strip_lat` on a SOF beat.
+
+**Regression:** `test_single_beat_packet_after_a_long_one`, second half — a
+3-byte-stripped single-beat packet following a 0-stripped long one.
+
+---
+
+## B004 — two packets' terminal events collided, reordering their payloads
+
+**Milestone:** M2 · `rtl/common/payload_window.sv`
+**Found by:** `tb/unit/test_payload_window.py::test_back_to_back_packets_with_different_strips`
+
+With zero idle between packets, a packet with an empty payload reported
+`o_empty` **one** cycle after its EOF beat, while a packet with an unaligned tail
+emitted its last payload beat **two** cycles after its EOF beat. Packet N's tail
+and packet N+1's `o_empty` therefore landed on the same cycle, and the two
+packets' results came out of the parser in the wrong order.
+
+The symptom was confusing: payload contents were all correct and the count was
+right — items 9 and 10 of 60 were simply swapped. It only reproduced with no idle
+cycles and with a specific pairing (unaligned tail followed by empty payload).
+
+**Root cause:** inconsistent latency on a per-packet terminal marker. A drain
+beat is inherently at EOF+2; `o_empty` was at EOF+1.
+
+**Fix:** `o_empty` and `o_strip_err` are staged through `empty_pend` /
+`strip_err_pend` so they land at EOF+2, where a tail beat would have been. See
+`docs/decisions/0003-no-backpressure-fixed-schedule.md`.
+
+**Regression:** the back-to-back test, plus a permanent check in
+`tb/common/axis_monitor.py`: `PayloadSink` now records an error whenever
+`o_empty` and `o_valid` are asserted on the same cycle, so any future collision
+fails loudly instead of shuffling results.
+
+---
+
+## B005 — a packet with an illegal IPv4 IHL still emitted payload bytes
+
+**Milestone:** M2 · `rtl/handwritten/hdr_parse_eth_ipv4_udp.sv`
+**Found by:** `tb/integration/test_parser_eth.py::test_malformed_packets`
+
+For an IPv4 header whose IHL is below the legal minimum of 5, `o_strip_bytes`
+fell back to 14 (the Ethernet-only offset). The record correctly reported
+`WS_BAD_HDR_LEN`, but `o_strip_valid` was still asserted, so `payload_window`
+happily shipped 60 bytes of "payload" measured from a made-up offset.
+
+A consumer checking `o_err` would discard it, but the parser should not emit
+bytes it has just declared meaningless — and at M4 those bytes would be fed
+straight into the message framer.
+
+**Fix:** `ihl_ok` is part of `o_strip_valid`, not just of the arithmetic. A
+header with no defined end has no defined payload, so `payload_window` reports
+`o_strip_err` and emits nothing.
+
+**Regression:** `test_malformed_packets` asserts that no malformed packet
+produces payload *bytes*, and separately that every packet still reports
+*something* — one `o_empty` or one `o_strip_err` — so suppressing the payload
+cannot turn into silently dropping the packet.
+
+---
+
 *(further entries appended as found)*
