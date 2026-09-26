@@ -93,6 +93,9 @@ module parser_top_simple_feed #(
   logic [BCNT_W-1:0] al_bytes;
   logic [LEN_W-1:0]  al_offset;
   logic [LEN_W-1:0]  al_pkt_bytes;
+  logic                 nx_sof;
+  logic [BCNT_W-1:0]    nx_bytes;
+  logic [LEN_W-1:0]     nx_pkt_bytes;
 
   pkt_align #(.DATA_W(DATA_W), .LEN_W(LEN_W)) u_align (
     .clk(clk), .rst_n(rst_n),
@@ -100,20 +103,25 @@ module parser_top_simple_feed #(
     .s_tkeep(s_axis_tkeep), .s_tlast(s_axis_tlast),
     .o_valid(al_valid), .o_data(al_data), .o_keep(al_keep),
     .o_sof(al_sof), .o_eof(al_eof), .o_bytes(al_bytes),
-    .o_offset(al_offset), .o_pkt_bytes(al_pkt_bytes), .o_keep_err(o_keep_err)
+    .o_offset(al_offset), .o_pkt_bytes(al_pkt_bytes), .o_keep_err(o_keep_err),
+    .nx_sof(nx_sof), .nx_bytes(nx_bytes),
+    .nx_pkt_bytes(nx_pkt_bytes)
   );
 
   // ---------------------------------------------------- header gathering ----
   logic [ACC_BITS-1:0] acc_win;
   logic [LEN_W-1:0]    acc_have;
+  logic [HDR_BYTES:0]  acc_have_ge;
   logic                acc_done;
   logic                acc_short;
 
   hdr_accum #(.DATA_W(DATA_W), .HDR_BYTES(HDR_BYTES), .LEN_W(LEN_W)) u_accum (
     .clk(clk), .rst_n(rst_n),
-    .i_valid(al_valid), .i_data(al_data), .i_sof(al_sof), .i_eof(al_eof),
-    .i_bytes(al_bytes), .i_offset(al_offset),
-    .o_win(acc_win), .o_have(acc_have), .o_done(acc_done), .o_short(acc_short)
+    .s_valid(s_axis_tvalid), .s_data(s_axis_tdata), .s_last(s_axis_tlast),
+    .nx_sof(nx_sof), .nx_bytes(nx_bytes),
+    .nx_pkt_bytes(nx_pkt_bytes),
+    .o_win(acc_win), .o_have(acc_have), .o_have_ge(acc_have_ge),
+    .o_done(acc_done), .o_short(acc_short)
   );
 
   logic             strip_valid;
@@ -123,7 +131,7 @@ module parser_top_simple_feed #(
 
   hdr_parse_simple_feed #(.LEN_W(LEN_W), .HDR_BYTES(HDR_BYTES)) u_parse (
     .clk(clk), .rst_n(rst_n),
-    .i_win(acc_win[WIN_BITS-1:0]), .i_have(acc_have), .i_done(acc_done),
+    .i_win(acc_win[WIN_BITS-1:0]), .i_have_ge(acc_have_ge), .i_done(acc_done),
     .o_strip_valid(strip_valid), .o_strip_bytes(strip_bytes),
     .o_rec_valid(o_rec_valid), .o_layer_valid(hdr_layer_ok),
     .o_err(o_hdr_err), .o_hdr_bytes(hdr_bytes),
@@ -356,7 +364,7 @@ module parser_top_simple_feed #(
   endgenerate
 
   logic unused_ok;
-  assign unused_ok = &{1'b0, acc_short, al_keep, al_pkt_bytes, hdr_layer_ok,
+  assign unused_ok = &{1'b0, acc_short, al_keep, al_pkt_bytes, acc_have, hdr_layer_ok,
                        hdr_bytes, pay_keep, pay_offset, slot_type, acc_pad};
 
 endmodule

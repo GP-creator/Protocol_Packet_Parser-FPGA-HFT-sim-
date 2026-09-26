@@ -35,8 +35,15 @@ module pkt_align #(
   output logic               o_eof,
   output logic [BCNT_W-1:0]  o_bytes,      // valid bytes in this beat
   output logic [LEN_W-1:0]   o_offset,     // packet byte index of lane 0
-  output logic [LEN_W-1:0]   o_pkt_bytes,  // total packet length; read at o_eof
-  output logic               o_keep_err
+  output logic [LEN_W-1:0]   o_pkt_bytes,  // o_offset + o_bytes; the packet length at o_eof
+  output logic               o_keep_err,
+
+  // The annotation of the ingress beat, before the register: what o_sof,
+  // o_bytes and o_pkt_bytes will be next cycle. Lets a consumer register its own
+  // state on the same edge as o_* rather than one cycle behind it.
+  output logic               nx_sof,
+  output logic [BCNT_W-1:0]  nx_bytes,
+  output logic [LEN_W-1:0]   nx_pkt_bytes
 );
 
   localparam int MAXK = pkg_wirespec::WS_MAX_KEEP_W;
@@ -63,6 +70,9 @@ module pkt_align #(
   always_comb begin
     base     = expect_sof ? LEN_W'(0) : byte_acc;
     next_acc = base + LEN_W'(nbytes);
+    nx_sof       = expect_sof;
+    nx_bytes     = nbytes;
+    nx_pkt_bytes = next_acc;
   end
 
   always_ff @(posedge clk) begin

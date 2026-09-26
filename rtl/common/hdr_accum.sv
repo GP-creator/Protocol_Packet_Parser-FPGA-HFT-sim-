@@ -5,10 +5,17 @@
 // bytes of a packet into exactly that: byte k of the packet at o_win[8k+7:8k],
 // regardless of DATA_W or which beat it arrived on.
 //
-// The window is presented *live*: the beat arriving this cycle is merged in
-// combinationally rather than a cycle later. That matters because a wide
-// datapath can deliver a discriminator byte and the first payload byte in the
-// same beat, and payload_window needs the header length by then.
+// The window includes the beat pkt_align is presenting in the same cycle. That
+// matters because a wide datapath can deliver a discriminator byte and the first
+// payload byte in the same beat, and payload_window needs the header length by
+// then. It is achieved by merging the beat on the *ingress* side of the edge that
+// pkt_align registers it on, using pkt_align's pre-register annotation, so every
+// output here is a flop and the header parser starts its cycle from registers.
+//
+// Byte counts are kept as a thermometer, o_have_ge[n] == (bytes seen >= n). A
+// beat of n bytes shifts it up by n, which is a small mux rather than an adder
+// followed by a compare, and both "where does the next beat land" and "is the
+// window complete" are single bits of it.
 
 `timescale 1ns / 1ps
 `default_nettype none
@@ -27,63 +34,87 @@ module hdr_accum #(
   input  wire                 clk,
   input  wire                 rst_n,
 
-  input  wire                 i_valid,
-  input  wire [DATA_W-1:0]    i_data,
-  input  wire                 i_sof,
-  input  wire                 i_eof,
-  input  wire [BCNT_W-1:0]    i_bytes,
-  input  wire [LEN_W-1:0]     i_offset,
+  // The ingress beat, and pkt_align's nx_* annotation of it.
+  input  wire                 s_valid,
+  input  wire [DATA_W-1:0]    s_data,
+  input  wire                 s_last,
+  input  wire                 nx_sof,
+  input  wire [BCNT_W-1:0]    nx_bytes,
+  input  wire [LEN_W-1:0]     nx_pkt_bytes,
 
-  output logic [ACC_BITS-1:0] o_win,    // packet byte k at bits [8k+7:8k]
-  output logic [LEN_W-1:0]    o_have,   // header bytes visible in o_win
-  output logic                o_done,   // window complete, or the packet ended
-  output logic                o_short   // ... and it ended first
+  // Aligned with pkt_align's o_* for the same beat.
+  output logic [ACC_BITS-1:0] o_win,     // packet byte k at bits [8k+7:8k]
+  output logic [LEN_W-1:0]    o_have,    // header bytes visible in o_win
+  output logic [HDR_BYTES:0]  o_have_ge, // o_have_ge[n] == (o_have >= n)
+  output logic                o_done,    // window complete, or the packet ended
+  output logic                o_short    // ... and it ended first
 );
 
-  // Accumulated beats of this packet, excluding the one arriving now.
-  logic [ACC_BITS-1:0] win_q;
-  logic [LEN_W-1:0]    have_q;
-  logic                armed;  // this packet has not reported completion yet
+  localparam int GE_W = HDR_BYTES + 1;
 
-  // Place the incoming beat at its byte offset. Every beat but the last is
-  // full, so the offset is always a whole number of beats -- a small decoder,
-  // not a barrel shifter.
-  logic [ACC_BITS-1:0] beat_ext;
+  logic                 armed;   // this packet has not reported completion yet
+  logic [ACC_BEATS-1:0] slot_q;  // slot_q[b]: the next beat starts at byte b*KEEP_W
+
+  logic [GE_W-1:0]        ge_from;
+  logic [GE_W+KEEP_W-1:0] ge_ext;
+  logic [GE_W-1:0]        ge_nx;
+  logic                   have_all;
+  logic [ACC_BEATS-1:0]   slot_nx;
+  logic [ACC_BITS-1:0]    beat_ext;
+  logic [ACC_BITS-1:0]    win_nx;
+  logic                   done_nx;
 
   always_comb begin
+    // therm(x + n)[m] == therm(x)[m - n] for m >= n, and 1 below it. A packet's
+    // first beat starts from therm(0), which is bit 0 alone.
+    ge_from  = nx_sof ? GE_W'(1) : o_have_ge;
+    ge_ext   = {ge_from, {KEEP_W{1'b1}}};
+    ge_nx    = GE_W'(ge_ext >> (BCNT_W'(KEEP_W) - nx_bytes));
+    have_all = ge_nx[HDR_BYTES];
+
+    // Every slot offset b*KEEP_W is below HDR_BYTES, so b*KEEP_W + 1 is in range.
+    for (int b = 0; b < ACC_BEATS; b++) begin
+      slot_nx[b] = s_last ? (b == 0) : (ge_nx[b * KEEP_W] && !ge_nx[b * KEEP_W + 1]);
+    end
+
+    // Place the incoming beat at its byte offset. Every beat but the last is
+    // full, so the offset is always a whole number of beats -- a small decoder,
+    // not a barrel shifter.
     beat_ext = '0;
-    if (i_valid) begin
-      for (int b = 0; b < ACC_BEATS; b++) begin
-        if (i_offset == LEN_W'(b * KEEP_W)) begin
-          beat_ext[b*DATA_W +: DATA_W] = i_data;
-        end
+    for (int b = 0; b < ACC_BEATS; b++) begin
+      if (slot_q[b]) begin
+        beat_ext[b*DATA_W +: DATA_W] = s_data;
       end
     end
-  end
 
-  logic [LEN_W-1:0] have_live;
+    win_nx = nx_sof ? beat_ext : (o_win | beat_ext);
 
-  always_comb begin
-    o_win = (i_valid && i_sof) ? beat_ext : (win_q | beat_ext);
-    have_live = i_valid ? (i_offset + LEN_W'(i_bytes)) : have_q;
-    o_have = have_live;
-    o_done = i_valid && armed && ((have_live >= LEN_W'(HDR_BYTES)) || i_eof);
-    o_short = o_done && (have_live < LEN_W'(HDR_BYTES));
+    done_nx = s_valid && armed && (have_all || s_last);
   end
 
   always_ff @(posedge clk) begin
     if (!rst_n) begin
-      win_q  <= '0;
-      have_q <= '0;
-      armed  <= 1'b1;
-    end else if (i_valid) begin
-      win_q  <= o_win;
-      have_q <= have_live;
-      if (i_eof) begin
-        // Re-arm for the next packet even if this one completed early.
-        armed <= 1'b1;
-      end else if (o_done) begin
-        armed <= 1'b0;
+      o_win     <= '0;
+      o_have    <= '0;
+      o_have_ge <= GE_W'(1);
+      o_done    <= 1'b0;
+      o_short   <= 1'b0;
+      armed     <= 1'b1;
+      slot_q    <= ACC_BEATS'(1);
+    end else begin
+      o_done  <= done_nx;
+      o_short <= done_nx && !have_all;
+      if (s_valid) begin
+        o_win     <= win_nx;
+        o_have    <= nx_pkt_bytes;
+        o_have_ge <= ge_nx;
+        slot_q    <= slot_nx;
+        if (s_last) begin
+          // Re-arm for the next packet even if this one completed early.
+          armed <= 1'b1;
+        end else if (done_nx) begin
+          armed <= 1'b0;
+        end
       end
     end
   end

@@ -15,6 +15,12 @@ results.xml
 *.log
 dump.vcd
 
+# Vivado runs of synth/vivado_ooc.tcl
+synth/out_*/
+.Xil/
+*.jou
+hs_err_pid*
+
 # Generated RTL is not checked in, except one sample kept for review
 rtl/generated/*
 !rtl/generated/sample/

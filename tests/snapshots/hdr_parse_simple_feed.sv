@@ -33,9 +33,10 @@ module hdr_parse_simple_feed #(
   input  wire                 clk,
   input  wire                 rst_n,
 
-  // Live header window from hdr_accum: packet byte k at bits [8k+7:8k].
+  // Live header window from hdr_accum: packet byte k at bits [8k+7:8k], and
+  // i_have_ge[n] == (at least n of those bytes are present).
   input  wire [WIN_BITS-1:0]  i_win,
-  input  wire [LEN_W-1:0]     i_have,
+  input  wire [HDR_BYTES:0]   i_have_ge,
   input  wire                 i_done,
 
   // Combinational header length, for payload_window.
@@ -55,6 +56,16 @@ module hdr_parse_simple_feed #(
 );
 
   import pkg_wirespec::*;
+
+  // Fewer than n header bytes present. Offsets and lengths are clamped to the
+  // worst-case chain, so n never exceeds HDR_BYTES; the guard only keeps the
+  // index in range. A lookup, where a compare against a byte count would put a
+  // carry chain on the header-length path.
+  localparam int GE_IDX_W = $clog2(HDR_BYTES + 1);
+
+  function automatic logic have_lt(input logic [LEN_W-1:0] n);
+    return (n > LEN_W'(HDR_BYTES)) || !i_have_ge[n[GE_IDX_W-1:0]];
+  endfunction
 
   // --------------------------------------------------------------------------
   // layer 1/1: feed_hdr -- 16 bytes of fields
@@ -88,7 +99,7 @@ module hdr_parse_simple_feed #(
   logic settled_feed_hdr;
 
   assign active_feed_hdr    = 1'b1;
-  assign trunc_fix_feed_hdr = i_have < (off_feed_hdr + LEN_W'(16));
+  assign trunc_fix_feed_hdr = have_lt(off_feed_hdr + LEN_W'(16));
   assign ok_feed_hdr        = active_feed_hdr && !trunc_fix_feed_hdr;
   assign settled_feed_hdr   = ok_feed_hdr;
 

@@ -16,6 +16,24 @@
 // The last input beat can leave up to KEEP_W-1 payload bytes unshipped. Those go
 // out in a drain cycle immediately after EOF, from registers captured at EOF, so
 // a back-to-back packet arriving in that same cycle cannot disturb them.
+//
+// Clocking. i_strip_* is combinational from the header parser and is the
+// deepest cone in the design, so it goes straight into a register, sampled with
+// each beat, and nothing else reads it. That costs nothing: no beat that emits
+// can be the one that first carries the header length (the length is known by
+// the first payload beat, and emission starts a beat later), and the
+// end-of-packet accounting is resolved in the drain cycle, by which time the
+// EOF beat's sample is in the register.
+//
+// Byte counts come from beat geometry, not running counters: every beat but the
+// last is full, so an emitting beat's payload offset is
+// (i_offset/KEEP_W - strip/KEEP_W - 1) * KEEP_W, and on the emitting EOF beat
+// the bytes still to ship are exactly i_bytes + KEEP_W - rot. Neither depends on
+// whether earlier beats emitted, so the emit decision only drives o_valid. A
+// packet with a tkeep violation (pkt_align o_keep_err) breaks the premise, but
+// its payload content is already undefined there because the funnel shift
+// assumes full beats; it still ends with exactly one o_eof.
+// (docs/decisions/0004-timing-closure.md)
 
 `timescale 1ns / 1ps
 `default_nettype none
@@ -39,12 +57,14 @@ module payload_window #(
   input  wire [BCNT_W-1:0]   i_bytes,
   input  wire [LEN_W-1:0]    i_offset,
 
-  // Header length for this packet. Must be asserted no later than the beat that
-  // carries the first payload byte; o_strip_err reports a packet where it was
-  // never asserted at all.
+  // Header length for this packet, sampled with each beat. Must be asserted no
+  // later than the beat that carries the first payload byte and held for the
+  // rest of the packet; o_strip_err reports a packet where it never was.
   input  wire                i_strip_valid,
   input  wire [LEN_W-1:0]    i_strip_bytes,
 
+  // Valid-only: every field but o_empty / o_strip_err is meaningful only with
+  // o_valid.
   output logic               o_valid,
   output logic [DATA_W-1:0]  o_data,
   output logic [KEEP_W-1:0]  o_keep,
@@ -64,59 +84,45 @@ module payload_window #(
   endfunction
 
   // ---------------------------------------------------------------- state --
-  logic [DATA_W-1:0] prev_q;     // previous input beat
-  logic [LEN_W-1:0]  strip_q;
-  logic              strip_lat;  // strip_q holds this packet's header length
-  logic [LEN_W-1:0]  emitted_q;  // payload bytes already shipped
+  logic [DATA_W-1:0] prev_q;      // previous input beat
+  logic              sr_valid;    // i_strip_* as sampled with the last beat
+  logic [LEN_W-1:0]  sr_bytes;
 
-  // A packet's terminal marker must sit at a fixed distance behind its EOF beat
-  // or two packets' markers collide on the bus. A drained payload's last beat
-  // lands two cycles after EOF, so o_empty and o_strip_err are staged to land
-  // there too rather than one cycle after. (docs/bugs-found.md B004)
-  logic              empty_pend;
-  logic              strip_err_pend;
-
-  logic              drain_q;
+  // End-of-packet capture, resolved in the following (drain) cycle. The drain
+  // beat, o_empty and o_strip_err all land two cycles after EOF: a packet's
+  // terminal marker must sit at a fixed distance behind its EOF beat or two
+  // packets' markers collide on the bus. (docs/bugs-found.md B004)
+  logic              ep_q;        // an EOF beat arrived last cycle
+  logic              ep_emit;     // ... and emitted a beat of its own
+  logic [BCNT_W-1:0] ep_bytes;    // its byte count
+  logic [LEN_W-1:0]  ep_pkt;      // the packet length
+  logic [LEN_W-1:0]  ep_shipped;  // payload bytes shipped by EOF, if it emitted
   logic [DATA_W-1:0] drain_src_q;
-  logic [ROT_W-1:0]  drain_rot_q;
-  logic [BCNT_W-1:0] drain_bytes_q;
-  logic [LEN_W-1:0]  drain_off_q;
 
   // -------------------------------------------------------- combinational --
-  logic              sof_now;
-  logic              strip_ok;
-  logic [LEN_W-1:0]  strip_eff;
-  logic [LEN_W-1:0]  emitted_eff;
   logic [ROT_W-1:0]  rot;
-  logic [LEN_W-1:0]  fbo;         // first payload beat, floored to a beat boundary
   logic              emit_now;
   logic [2*DATA_W-1:0] win;
   logic [DATA_W-1:0] win_sh;
   logic [ROT_W+2:0]  shamt;
-  logic [LEN_W-1:0]  pkt_bytes;
-  logic [LEN_W-1:0]  pay_total;
-  logic [LEN_W-1:0]  rem_before;
+  logic              last_out;
   logic [BCNT_W-1:0] out_bytes;
-  logic [LEN_W-1:0]  rem_after;
+  logic [LEN_W-ROT_W-1:0] beats_before;  // payload beats shipped before this one
 
+  logic              ep_more;
+  logic [BCNT_W-1:0] ep_rem;      // < KEEP_W whenever drain_now
+  logic              drain_now;
   logic [2*DATA_W-1:0] drain_win;
   logic [DATA_W-1:0]   drain_sh;
-  logic [ROT_W+2:0]    drain_shamt;
 
   always_comb begin
-    // On a packet's first beat, strip_lat / strip_q / emitted_q still describe
-    // the *previous* packet: the registers that clear them are updated by this
-    // same beat. A packet whose first beat is also its last -- one beat long,
-    // or with its whole payload in the tail -- reads them in that stale cycle,
-    // so the combinational path has to take the sof case explicitly rather than
-    // relying on the register update. (docs/bugs-found.md B002, B003)
-    sof_now     = i_valid && i_sof;
-    strip_ok    = sof_now ? i_strip_valid : (strip_lat || i_strip_valid);
-    strip_eff   = (sof_now || !strip_lat) ? i_strip_bytes : strip_q;
-    emitted_eff = sof_now ? LEN_W'(0) : emitted_q;
+    rot = sr_bytes[ROT_W-1:0];
 
-    rot       = strip_eff[ROT_W-1:0];
-    fbo       = strip_eff - LEN_W'(rot);
+    // A beat emits once lane 0 has passed the first payload beat:
+    // i_offset >= floor(strip / KEEP_W) * KEEP_W + KEEP_W. On a packet's first
+    // beat the sample is the previous packet's, but a first beat never emits.
+    emit_now = i_valid && !i_sof && sr_valid &&
+               (i_offset[LEN_W-1:ROT_W] > sr_bytes[LEN_W-1:ROT_W]);
 
     // {this beat, previous beat} >> rot bytes: the low half is packet bytes
     // [i_offset-KEEP_W+rot, i_offset+rot).
@@ -124,106 +130,89 @@ module payload_window #(
     win    = {i_data, prev_q};
     win_sh = DATA_W'(win >> shamt);
 
-    emit_now = i_valid && strip_ok && (i_offset >= (fbo + LEN_W'(KEEP_W)));
-
-    pkt_bytes  = i_offset + LEN_W'(i_bytes);
-    pay_total  = (strip_ok && (pkt_bytes > strip_eff)) ? (pkt_bytes - strip_eff) : LEN_W'(0);
-    rem_before = pay_total - emitted_eff;
-
     // Only the final beat can be short; every earlier one ships a full beat.
-    if (i_eof) begin
-      out_bytes = (rem_before >= LEN_W'(KEEP_W)) ? BCNT_W'(KEEP_W) : rem_before[BCNT_W-1:0];
+    // On the EOF beat, i_bytes + KEEP_W - rot bytes remain: this beat takes up
+    // to KEEP_W of them and the drain takes i_bytes - rot if that is positive.
+    last_out  = i_eof && (i_bytes <= BCNT_W'(rot));
+    out_bytes = last_out ? BCNT_W'(i_bytes + BCNT_W'(KEEP_W) - BCNT_W'(rot))
+                         : BCNT_W'(KEEP_W);
+
+    beats_before = i_offset[LEN_W-1:ROT_W] - sr_bytes[LEN_W-1:ROT_W] - 1'b1;
+
+    // Drain cycle: sr_* now holds the EOF beat's sample. Emitting, the drain is
+    // i_bytes - rot; not emitting, nothing has shipped and it is the packet
+    // length minus the header.
+    if (ep_emit) begin
+      ep_more = ep_bytes > BCNT_W'(rot);
+      ep_rem  = ep_bytes - BCNT_W'(rot);
     end else begin
-      out_bytes = BCNT_W'(KEEP_W);
+      ep_more = ep_pkt > sr_bytes;
+      ep_rem  = BCNT_W'(ep_pkt) - BCNT_W'(sr_bytes);
     end
+    drain_now = ep_q && sr_valid && ep_more;
 
-    rem_after = i_eof ? (rem_before - (emit_now ? LEN_W'(out_bytes) : LEN_W'(0))) : LEN_W'(0);
-
-    drain_shamt = {drain_rot_q, 3'b000};
-    drain_win   = {{DATA_W{1'b0}}, drain_src_q};
-    drain_sh    = DATA_W'(drain_win >> drain_shamt);
+    drain_win = {{DATA_W{1'b0}}, drain_src_q};
+    drain_sh  = DATA_W'(drain_win >> shamt);
   end
 
   // ---------------------------------------------------------------- output --
   always_ff @(posedge clk) begin
     if (!rst_n) begin
-      o_valid       <= 1'b0;
-      o_data        <= '0;
-      o_keep        <= '0;
-      o_sof         <= 1'b0;
-      o_eof         <= 1'b0;
-      o_bytes       <= '0;
-      o_offset      <= '0;
-      o_empty        <= 1'b0;
-      o_strip_err    <= 1'b0;
-      empty_pend     <= 1'b0;
-      strip_err_pend <= 1'b0;
-      prev_q         <= '0;
-      strip_q       <= '0;
-      strip_lat     <= 1'b0;
-      emitted_q     <= '0;
-      drain_q       <= 1'b0;
-      drain_src_q   <= '0;
-      drain_rot_q   <= '0;
-      drain_bytes_q <= '0;
-      drain_off_q   <= '0;
+      o_valid     <= 1'b0;
+      o_data      <= '0;
+      o_keep      <= '0;
+      o_sof       <= 1'b0;
+      o_eof       <= 1'b0;
+      o_bytes     <= '0;
+      o_offset    <= '0;
+      o_empty     <= 1'b0;
+      o_strip_err <= 1'b0;
+      prev_q      <= '0;
+      sr_valid    <= 1'b0;
+      sr_bytes    <= '0;
+      ep_q        <= 1'b0;
+      ep_emit     <= 1'b0;
+      ep_bytes    <= '0;
+      ep_pkt      <= '0;
+      ep_shipped  <= '0;
+      drain_src_q <= '0;
     end else begin
-      o_valid        <= 1'b0;
-      drain_q        <= 1'b0;
-      // One cycle behind the EOF beat that raised them, so that they surface
-      // alongside where a drain beat would have been.
-      o_empty        <= empty_pend;
-      o_strip_err    <= strip_err_pend;
-      empty_pend     <= 1'b0;
-      strip_err_pend <= 1'b0;
+      ep_q        <= 1'b0;
+      o_empty     <= ep_q && sr_valid && !ep_more && !ep_emit;
+      o_strip_err <= ep_q && !sr_valid;
 
-      // The tail left over after the last input beat. Captured at EOF so the
-      // next packet, which may start in this very cycle, cannot disturb it.
-      if (drain_q) begin
-        o_valid  <= 1'b1;
+      // The payload fields are loaded every cycle and only o_valid carries the
+      // emit/drain decision. A drain cycle can never also emit -- the beat after
+      // EOF opens a packet -- so ep_q alone picks the source.
+      o_valid <= drain_now || emit_now;
+      if (ep_q) begin
         o_data   <= drain_sh;
-        o_keep   <= keep_mask(drain_bytes_q);
-        o_bytes  <= drain_bytes_q;
-        o_sof    <= (drain_off_q == LEN_W'(0));
+        o_keep   <= keep_mask(ep_rem);
+        o_bytes  <= ep_rem;
+        o_sof    <= !ep_emit;
         o_eof    <= 1'b1;
-        o_offset <= drain_off_q;
+        o_offset <= ep_emit ? ep_shipped : LEN_W'(0);
+      end else begin
+        o_data   <= win_sh;
+        o_keep   <= keep_mask(out_bytes);
+        o_bytes  <= out_bytes;
+        o_sof    <= (beats_before == '0);
+        o_eof    <= last_out;
+        o_offset <= {beats_before, ROT_W'(0)};
       end
 
       if (i_valid) begin
-        prev_q <= i_data;
-
-        if (i_sof) begin
-          emitted_q <= '0;
-          strip_lat <= i_strip_valid;
-          if (i_strip_valid) begin
-            strip_q <= i_strip_bytes;
-          end
-        end else if (!strip_lat && i_strip_valid) begin
-          strip_lat <= 1'b1;
-          strip_q   <= i_strip_bytes;
-        end
-
-        if (emit_now) begin
-          o_valid   <= 1'b1;
-          o_data    <= win_sh;
-          o_keep    <= keep_mask(out_bytes);
-          o_bytes   <= out_bytes;
-          o_sof     <= (emitted_eff == LEN_W'(0));
-          o_eof     <= i_eof && (rem_after == LEN_W'(0));
-          o_offset  <= emitted_eff;
-          emitted_q <= emitted_eff + LEN_W'(out_bytes);
-        end
+        prev_q   <= i_data;
+        sr_valid <= i_strip_valid;
+        sr_bytes <= i_strip_bytes;
 
         if (i_eof) begin
-          if (rem_after != LEN_W'(0)) begin
-            drain_q       <= 1'b1;
-            drain_src_q   <= i_data;
-            drain_rot_q   <= rot;
-            drain_bytes_q <= rem_after[BCNT_W-1:0];
-            drain_off_q   <= emitted_eff + (emit_now ? LEN_W'(out_bytes) : LEN_W'(0));
-          end
-          empty_pend     <= strip_ok && (pay_total == LEN_W'(0));
-          strip_err_pend <= !strip_ok;
+          ep_q        <= 1'b1;
+          ep_emit     <= emit_now;
+          ep_bytes    <= i_bytes;
+          ep_pkt      <= i_offset + LEN_W'(i_bytes);
+          ep_shipped  <= {beats_before + 1'b1, ROT_W'(0)};
+          drain_src_q <= i_data;
         end
       end
     end

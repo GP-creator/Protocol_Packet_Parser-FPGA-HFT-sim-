@@ -94,6 +94,13 @@ module parser_top_eth_ipv4_udp #(
   logic [LEN_W-1:0]  al_pkt_bytes;
   logic              al_keep_err;
 
+  localparam int ACC_BEATS = (HDR_BYTES + KEEP_W - 1) / KEEP_W;
+  localparam int ACC_BITS  = ACC_BEATS * KEEP_W * 8;
+
+  logic                 nx_sof;
+  logic [BCNT_W-1:0]    nx_bytes;
+  logic [LEN_W-1:0]     nx_pkt_bytes;
+
   pkt_align #(
     .DATA_W(DATA_W),
     .LEN_W (LEN_W)
@@ -111,16 +118,17 @@ module parser_top_eth_ipv4_udp #(
     .o_eof      (al_eof),
     .o_bytes    (al_bytes),
     .o_offset   (al_offset),
-    .o_pkt_bytes(al_pkt_bytes),
-    .o_keep_err (al_keep_err)
+    .o_pkt_bytes (al_pkt_bytes),
+    .o_keep_err  (al_keep_err),
+    .nx_sof      (nx_sof),
+    .nx_bytes    (nx_bytes),
+    .nx_pkt_bytes(nx_pkt_bytes)
   );
 
   // ------------------------------------------------------ header gathering --
-  localparam int ACC_BEATS = (HDR_BYTES + KEEP_W - 1) / KEEP_W;
-  localparam int ACC_BITS  = ACC_BEATS * KEEP_W * 8;
-
   logic [ACC_BITS-1:0] acc_win;
   logic [LEN_W-1:0]    acc_have;
+  logic [HDR_BYTES:0]  acc_have_ge;
   logic                acc_done;
   logic                acc_short;
 
@@ -131,16 +139,17 @@ module parser_top_eth_ipv4_udp #(
   ) u_accum (
     .clk     (clk),
     .rst_n   (rst_n),
-    .i_valid (al_valid),
-    .i_data  (al_data),
-    .i_sof   (al_sof),
-    .i_eof   (al_eof),
-    .i_bytes (al_bytes),
-    .i_offset(al_offset),
-    .o_win   (acc_win),
-    .o_have  (acc_have),
-    .o_done  (acc_done),
-    .o_short (acc_short)
+    .s_valid     (s_axis_tvalid),
+    .s_data      (s_axis_tdata),
+    .s_last      (s_axis_tlast),
+    .nx_sof      (nx_sof),
+    .nx_bytes    (nx_bytes),
+    .nx_pkt_bytes(nx_pkt_bytes),
+    .o_win       (acc_win),
+    .o_have      (acc_have),
+    .o_have_ge   (acc_have_ge),
+    .o_done      (acc_done),
+    .o_short     (acc_short)
   );
 
   // ------------------------------------------------------------- the parse --
@@ -217,7 +226,7 @@ module parser_top_eth_ipv4_udp #(
   // mask is already validated by pkt_align. Tie them off explicitly rather than
   // leaving dangling nets.
   logic unused_ok;
-  assign unused_ok = &{1'b0, acc_short, al_keep, al_pkt_bytes,
+  assign unused_ok = &{1'b0, acc_short, al_keep, al_pkt_bytes, acc_have_ge,
                        acc_win[ACC_BITS-1:WIN_BITS]};
 
 endmodule

@@ -33,9 +33,10 @@ module hdr_parse_eth_ipv4_udp #(
   input  wire                 clk,
   input  wire                 rst_n,
 
-  // Live header window from hdr_accum: packet byte k at bits [8k+7:8k].
+  // Live header window from hdr_accum: packet byte k at bits [8k+7:8k], and
+  // i_have_ge[n] == (at least n of those bytes are present).
   input  wire [WIN_BITS-1:0]  i_win,
-  input  wire [LEN_W-1:0]     i_have,
+  input  wire [HDR_BYTES:0]   i_have_ge,
   input  wire                 i_done,
 
   // Combinational header length, for payload_window.
@@ -71,6 +72,16 @@ module hdr_parse_eth_ipv4_udp #(
 );
 
   import pkg_wirespec::*;
+
+  // Fewer than n header bytes present. Offsets and lengths are clamped to the
+  // worst-case chain, so n never exceeds HDR_BYTES; the guard only keeps the
+  // index in range. A lookup, where a compare against a byte count would put a
+  // carry chain on the header-length path.
+  localparam int GE_IDX_W = $clog2(HDR_BYTES + 1);
+
+  function automatic logic have_lt(input logic [LEN_W-1:0] n);
+    return (n > LEN_W'(HDR_BYTES)) || !i_have_ge[n[GE_IDX_W-1:0]];
+  endfunction
 
   // --------------------------------------------------------------------------
   // layer 1/3: eth -- 14 bytes of fields
@@ -187,20 +198,20 @@ module hdr_parse_eth_ipv4_udp #(
   logic settled_udp;
 
   assign active_eth    = 1'b1;
-  assign trunc_fix_eth = i_have < (off_eth + LEN_W'(14));
+  assign trunc_fix_eth = have_lt(off_eth + LEN_W'(14));
   assign ok_eth        = active_eth && !trunc_fix_eth;
   // Settled means the chain stops here: this layer parsed and its selector
   // names no layer we know, so the payload starts at its end.
   assign settled_eth   = ok_eth && !((eth_ethertype == 16'h0800));
   assign active_ipv4    = ok_eth && (eth_ethertype == 16'h0800);
-  assign trunc_fix_ipv4 = i_have < (off_ipv4 + LEN_W'(20));
-  assign trunc_len_ipv4 = i_have < (off_ipv4 + len_ipv4);
+  assign trunc_fix_ipv4 = have_lt(off_ipv4 + LEN_W'(20));
+  assign trunc_len_ipv4 = have_lt(off_ipv4 + len_ipv4);
   assign ok_ipv4        = active_ipv4 && !trunc_fix_ipv4 && !len_bad_ipv4 && !trunc_len_ipv4;
   // Settled means the chain stops here: this layer parsed and its selector
   // names no layer we know, so the payload starts at its end.
   assign settled_ipv4   = ok_ipv4 && !((ipv4_protocol == 8'h11));
   assign active_udp    = ok_ipv4 && (ipv4_protocol == 8'h11);
-  assign trunc_fix_udp = i_have < (off_udp + LEN_W'(8));
+  assign trunc_fix_udp = have_lt(off_udp + LEN_W'(8));
   assign ok_udp        = active_udp && !trunc_fix_udp;
   assign settled_udp   = ok_udp;
 
